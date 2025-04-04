@@ -21,7 +21,7 @@ import { createDinnerParty } from '../services/groups';
 import { SvgXml } from 'react-native-svg';
 
 // Temporarily hardcode the API key
-const GOOGLE_API_KEY = 'AIzaSyDboCTH-xaF3fFoGUoAzOBgV0TYcvnpdPc';
+const GOOGLE_API_KEY = '';
 
 const { width } = Dimensions.get('window');
 const ANIMATION_DURATION = 300;
