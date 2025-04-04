@@ -1,0 +1,172 @@
+# Host Screen Swiping Feature Documentation
+
+## Overview
+The host swiping feature is implemented in the Social tab's Host section, allowing dinner party hosts to review and manage group requests through an interactive card-based interface.
+
+## Component Structure
+
+### Main Components
+1. `HostScreen` (Main Container)
+   - Manages the overall state and logic
+   - Handles card transitions and swipe actions
+   - Contains mock data for simulation
+
+2. `GroupCard` (Card Component)
+   - Displays individual group profiles
+   - Handles swipe gestures and animations
+   - Contains scrollable content with videos and member profiles
+
+### State Management
+1. Screen-level State:
+   - `currentIndex`: Tracks current card position
+   - `isFinished`: Indicates when all cards are reviewed
+   - `isAccepted`: Indicates when a group is accepted
+   - `brightness`: Manages video brightness based on device theme
+   - `translateX`: Shared value for horizontal swipe animation
+   - `glowOpacity`: Shared value for swipe effect intensity
+
+2. Card-level State:
+   - `isScrolling`: Prevents swipe during content scroll
+   - `translateY`: Vertical position animation
+   - `scale`: Card scale animation
+   - `opacity`: Card opacity animation
+
+## Features
+
+### Card Display
+- Full-screen card layout with white background
+- Drop shadow for depth
+- Rounded corners (20pt radius)
+- Header with group name
+- Scrollable content area
+
+### Content Structure
+1. Videos Section
+   - Three auto-playing, looping videos
+   - Muted playback
+   - Cover resize mode
+   - Responsive height based on screen width
+
+2. Members Section
+   - Horizontal layout of member profiles
+   - Circular profile pictures (100x100)
+   - Member names below pictures
+   - SDSU purple (#4B2E83) for text
+
+### Swipe Interactions
+1. Left Swipe (Reject):
+   - Card rotates counterclockwise
+   - Slides off screen to the left
+   - Shows next card in stack
+   - "No more groups to see" when finished
+
+2. Right Swipe (Accept):
+   - Card rotates clockwise
+   - Confirmation alert appears
+   - If confirmed, shows acceptance screen
+   - If cancelled, card returns to center
+
+### Animation Details
+- Spring animations for natural movement
+- Rotation interpolation (-30° to 30°)
+- Scale animation for inactive cards (0.9)
+- Fade transitions for card changes
+- Velocity-based swipe detection
+
+## Technical Implementation
+
+### Constants
+- `CARD_WIDTH`: Screen width - 40px
+- `VIDEO_HEIGHT`: Equal to screen width
+- `SWIPE_THRESHOLD`: 120 (velocity threshold)
+- `SWIPE_DURATION`: 400ms
+- `FADE_DURATION`: 300ms
+
+### Animation Configuration
+```typescript
+SPRING_CONFIG = {
+  stiffness: 100,
+  damping: 20
+}
+```
+
+### Mock Data Structure
+```typescript
+interface GroupMember {
+  name: string;
+  profilePic: 'ian' | 'eli' | 'adam';
+}
+
+interface Group {
+  id: string;
+  members: GroupMember[];
+}
+```
+
+### Key Animations
+1. Card Transform:
+   ```typescript
+   transform: [
+     { translateX: translateX.value },
+     { translateY: translateY.value },
+     { rotate: `${rotate}deg` },
+     { scale: scale.value }
+   ]
+   ```
+
+2. Card Styling:
+   ```typescript
+   card: {
+     width: CARD_WIDTH,
+     height: '100%',
+     borderRadius: 20,
+     backgroundColor: '#fff',
+     shadowColor: '#000',
+     shadowOffset: { width: 0, height: 12 },
+     shadowOpacity: 0.6,
+     shadowRadius: 24,
+     elevation: 24
+   }
+   ```
+
+## States and Transitions
+
+### Initial State
+- Shows first card at full scale
+- Next card visible behind at 0.9 scale
+- White background
+- Prominent shadow
+
+### During Swipe
+- Card follows finger movement
+- Rotation based on swipe direction
+- Shadow maintains depth effect
+- Content remains scrollable
+
+### After Swipe
+1. Rejection (Left):
+   - Card exits left
+   - Next card animates to full scale
+   - Counter increments
+
+2. Acceptance (Right):
+   - Alert confirmation
+   - If confirmed: Shows acceptance screen
+   - If cancelled: Card returns to center
+
+### End States
+1. All Rejected:
+   - "No more groups to see" message
+   - Reset button to start over
+
+2. Group Accepted:
+   - "Group accepted!" message
+   - Shows accepted group name
+   - Reset button to start over
+
+## Usage Notes
+1. Only two cards rendered at a time for performance
+2. Videos auto-play only on active card
+3. Scroll and swipe gestures are mutually exclusive
+4. Shadow effect creates clear visual hierarchy
+5. Reset functionality for demo purposes

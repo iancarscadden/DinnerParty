@@ -1,0 +1,7 @@
+We will be using supabase for the database and authentication and storage.
+
+Here is the keys for the project:
+
+URL: https://wnwvguldjsqmynxdrfij.supabase.co
+
+API Key: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Indud3ZndWxkanNxbXlueGRyZmlqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Mzk0MTc5MTcsImV4cCI6MjA1NDk5MzkxN30.e80AClQzDPSFF4tdWtoJdkvKvxj4nZezJgQEJ5d5FwU

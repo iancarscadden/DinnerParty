@@ -1,0 +1,25 @@
+This is a textual outline of what the group profile modal should look like. When shown to a user
+
+This will be used when a user presses on a pin on the map, which will bring up the group
+profile of the group that the pin represents.
+
+Outline of how to modal will come up:
+- The modal should look like it comes out of the screen from the pin thats being pressed.
+- The modal will have a X button on the top right corner.
+- The modal will also have a title in bold from the top left corner that will be the hosts name followed by "Dinner Party"
+ - for example it will say "Ian's Dinner Party"
+ - Then the top line of the modal will be 3 profile pictures of the hosts of the group.
+ - Right under each profile picture will be the name of the member associated with the profile picture (for exmaple "Ian", "Eli", "Adam")
+ - then below this middle centered will be "7:00om Friday, 2/25/2025"
+ - then below this will say the menu - there will be entre taht says steak and avacado
+ - We will then incorportate 3 video of the hosts group. so below the text components there will be 3 videos vertically stacked. 
+ These videos will take up space so we will need to make the profile a scrollable modal. we also want all these videos to be the same size. so we 
+ will need to do some padding and margin calculations to make sure they are all the same size.
+
+- We also want the videos to all be playing at the same time, so as the user scrolls down the videos will play.
+- We also at the bottom of the modal (this part will not be included in the scroll view as it will alaways be there) will the a button on the left
+thats says "Hide Party" which is grey and then a button that says Request to Attend which is Green. 
+
+The file for this modal will be placed in the /screens/group-profile-modal.tsx file. for this iteration we will be using dummy hard coded data, as well 
+as a hardcoded videos that will be named "video1.mp4", "video2.mp4", "video3.mp4" which will be in the assets/videos folder.
+

@@ -1,0 +1,50 @@
+We are not going to implement some aspects of the social tab for the dummy demo app, the things
+we will be making me a hardcoded version of how the app would look in a production environment.
+
+We will be reusing certain elements that we have already made for the map tab.
+
+First of all we will want to make 3 individual screens that will go in the screens directory as so
+we can spread out the code for the social tab into 3 one main and 3 sub screens.
+
+Details of the attend sub tab:
+ - This attned sub tab is meant for a the user to see which dinner party they are currently
+ locked in to attend
+ - We will just reuse all of the information from the current profile modal that we have already, except we will
+ need to make some changes, so maybe will will make a new modal called attend modal where it will
+ as i said since this is a dummy app reuse all of the information from the current profile modal
+ but at the top it will say, your going!, Message Ian, 2066931552 to get it going. and the phone
+ number will look like it can be touched. 
+ - They below that text at the top will just be a scrollable display of the profiles information, where 
+ when you scroll to the bottom of the tab there will be a red button that says, "Cancel on them"
+
+ Now moving onto the group sub tab:
+  - This tab will have some text that says, "Create or join a group to get started", where Then
+  below this there will be two buttons, one that says create a group which is already there, and one 
+  that says Join with a Code.
+  - When the user presses join with a code a modak modal will pop up over the screen with a 
+  nice look place where the user can enter 6 digits, then hit okay, or they can hit a right arrow
+  on the top right to go out of this join code modal. 
+  - If the create a group button is pressed, the user screen will change to say "Get a least 3 members
+  to start making your group's profile" with then we will say "Your code" and it will be a dummy code.
+  - there will then be a cancel button on the bottom of the screen that will take the user back to the 
+  screen where they can choose to hit the button to create a group or join with a code.
+
+  Now moving onto the host tab, this is where the user would see a list of groups that have
+  requested to come the their dinner party, and they can choose to accept or reject the request.
+  - the way we will implement this for out dummy demo app is there will be text at the top that says, 
+    Accept one group to come to your Dinner party", where then below this there will be a nice horizontal scrollabe list
+    of rectangles that are defined as follows:
+    - These boxes will act as the way the user can pull up group profiles of the groups that
+    have sent a request to attend. For all of the information that will will be using for these boxes and
+    profiles it will be the same information that we have already used for the current profile modal display (profile pictures and videos)
+    - When looking at the boxes before clicking on them - they will from the left side each have 3 profile pictures on each box
+    and then on the right side of the box will a right facing arrow. when the user taps on one of these boxes it will
+    bring up a modal just like the group-profile-modal that we have already made.  just it will not have the
+    informatino of a time, date, menu, as it is the profile of a group trying to apply to attend a dinner party.
+    This will obvsouly be a scrollable modal as we are going to be displaying the videos, but at the bottom will be 
+    a fixed, Hide button with and then a green Accept! button. where when you press it there is a system alert that says,
+    you are can only accept one group to attend, are you sure? - where the answers will be cancel or accept.
+
+    - That defines all of the functionality for the socal tab and sub tabs for the dummy demo app. 
+
+

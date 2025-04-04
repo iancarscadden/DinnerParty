@@ -1,6 +1,6 @@
 # Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
 
-# dependencies
+# Node modules
 node_modules/
 
 # Expo
@@ -31,8 +31,30 @@ yarn-error.*
 
 # local env files
 .env*.local
+.env
 
 # typescript
 *.tsbuildinfo
+
+# android/ios specific
+android/
+ios/
+build/
+
+# logs
+logs
+*.log
+
+# Coverage directory used by tools like istanbul
+coverage
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# EAS
+.eas/
 
 app-example

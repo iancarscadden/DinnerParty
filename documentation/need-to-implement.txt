@@ -1,0 +1,6 @@
+For the group profile modal when pulled up on the map, the title text "Ian's dinner party" should be middle centered text.
+Now instead of having the Profile pictures, names, then the menu, at top in going down order, first we want to show the
+videos in a verticaly stack, and we also want to make the videos vertically taller. (please comment out where i can adjust this and make it clear if increaing or decreasing the value will make it bigger or taller)
+Then under the videos, will be the date of the party, then under that middle centered will be the menu.
+Then under the menu will be the 3 profile pictures in the horizontal row with the corresponding names below the profile pictures. we also make to make the profile pcitures bigger.
+we also want to make the videos correlate with the brightness value of the screen, right now the videos are the same brightness no matter the brightness value on the mobile device.

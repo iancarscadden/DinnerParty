@@ -1,0 +1,26 @@
+We will now be setting up the supabase database for our project. 
+
+The first step will be implementing a user onboarding process, where a user can log in or sign up with supabase auth.
+When designing the onboarding process for our app, we want to use general practice to make it so that
+if there is no authenticated user, the app will direct the user to the onboarding process when it is opened
+where the user can then log in or sign up depending on what they need to do.
+Obviously, if there is an authenticated user, the app will direct the user to the main app screen.
+
+will be seting up the onboarding screens in screens/onboarding
+
+where we can name the onboarding by what step it is on. 
+
+we also want to put all our files we need / scripts / logic for the supabase auth / all future script queries in
+the /services folder.
+
+lets now set up supabase in our project, evyerthing we need for it, as we will be using it for auth, databaseing
+as well as storage.
+
+for now we will also be writing to the users table in databse scema, which for now will just have a user id,
+a name, and a url to a profile picture. the descrition to this is contained in the database-tables.txt file.
+
+We will be writing to the users table in the database-functions.txt file so we always have a current understanding 
+of how we are wrting and querying the database for our app needs. And we will be updating
+the database-tables.txt file as we add/need more tables/fields for tables to the database as we expand
+to encompass more of the app needs.
+

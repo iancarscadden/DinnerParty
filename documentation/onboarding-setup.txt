@@ -1,0 +1,32 @@
+okay great it seems everything is working. Lets now create some basic onboarding screens in 
+screens/onboarding, where there will be multiple steps, the first screen will just say welcome 
+to dinner party on it, with a continue button at the bottom, the next screen will say enter your email 
+and a password with a continue at the bottom, this will then send a verification code to the email, which we will
+through supabase where we have already set up custom smtp: here is the email:
+
+it is the template for "confirm signup": 
+
+here the code:
+
+<h2>Confirm Your Signup</h2>
+
+<p>Thank you for signing up! Please use the verification code below to confirm your email address:</p>
+
+<h3>{{ .Token }}</h3>
+
+<p>Alternatively, you can confirm your email by clicking the link below:</p>
+
+<p><a href="{{ .ConfirmationURL }}">Confirm your email</a></p>
+
+<p>If you did not sign up for this account, please disregard this email.</p>
+
+As you can see, it will be so the user can enter a code that is sent to their email with the .Token, which 
+when the user enters this in the code entry screen for onbaoroding, when its verified they will then, be sent 
+to the next screen, where the user will enter their first name, and then hit contune, then the user 
+will enter a profile picture, where they can then hit contine, and then this whill all be written to their
+users table in supabse, where they will then be in an authenticated state, and can then be routed to the 
+main tabs of the app. 
+
+
+
+

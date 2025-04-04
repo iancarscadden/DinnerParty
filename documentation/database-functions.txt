@@ -1,0 +1,352 @@
+This is the file where you will write all of the interworkings of the logic we use to query the database for
+all of our app needs.
+
+This file will act as a text description of the databse tables list in database-tables.txt
+
+# Database Functions Documentation
+
+## Authentication Functions
+
+### 1. Sign Up
+- **Function**: `supabase.auth.signUp()`
+- **Location**: `app/onboarding/signup.tsx`
+- **Purpose**: Creates a new user account in Supabase Auth
+- **Parameters**:
+  - email: string
+  - password: string
+  - options: { emailRedirectTo: string }
+- **Returns**: Promise with user session data or error
+- **Usage Example**:
+```typescript
+const { data, error } = await supabase.auth.signUp({
+  email,
+  password,
+  options: {
+    emailRedirectTo: 'dinnerparty://onboarding/verify'
+  }
+});
+```
+
+### 2. Sign In
+- **Function**: `supabase.auth.signInWithPassword()`
+- **Location**: `app/onboarding/login.tsx`
+- **Purpose**: Authenticates existing users
+- **Parameters**:
+  - email: string
+  - password: string
+- **Returns**: Promise with user session data or error
+- **Usage Example**:
+```typescript
+const { error } = await supabase.auth.signInWithPassword({
+  email,
+  password
+});
+```
+
+### 3. Verify Email
+- **Function**: `supabase.auth.verifyOtp()`
+- **Location**: `app/onboarding/verify.tsx`
+- **Purpose**: Verifies user's email through OTP code
+- **Parameters**:
+  - email: string
+  - token: string
+  - type: 'signup'
+- **Returns**: Promise with verification result
+- **Usage Example**:
+```typescript
+const { data, error } = await supabase.auth.verifyOtp({
+  email,
+  token: code,
+  type: 'signup'
+});
+```
+
+### 4. Sign Out
+- **Function**: `supabase.auth.signOut()`
+- **Location**: `app/(tabs)/profile.tsx`
+- **Purpose**: Signs out the current user
+- **Parameters**: None
+- **Returns**: Promise with success or error
+- **Usage Example**:
+```typescript
+const { error } = await supabase.auth.signOut();
+```
+
+## User Profile Functions
+
+### 1. Get User Profile
+- **Function**: `getUserProfile()`
+- **Location**: `services/users.ts`
+- **Purpose**: Retrieves user profile data from the users table
+- **Parameters**:
+  - userId: string
+- **Returns**: Promise<UserProfile | null>
+- **Usage Example**:
+```typescript
+const profile = await getUserProfile(session.user.id);
+```
+
+### 2. Create User Profile
+- **Function**: `createUserProfile()`
+- **Location**: `services/users.ts`
+- **Purpose**: Creates new user profile after signup
+- **Parameters**:
+  - userId: string
+  - display_name: string
+  - profilePictureUrl: string
+- **Returns**: Promise<UserProfile>
+- **Usage Example**:
+```typescript
+const profile = await createUserProfile(
+  userId,
+  display_name,
+  profilePictureUrl
+);
+```
+
+### 3. Update User Profile
+- **Function**: `updateUserProfile()`
+- **Location**: `services/users.ts`
+- **Purpose**: Updates existing user profile data
+- **Parameters**:
+  - userId: string
+  - updates: Partial<Omit<UserProfile, 'id' | 'created_at'>>
+- **Returns**: Promise<UserProfile>
+- **Usage Example**:
+```typescript
+const updated = await updateUserProfile(userId, {
+  display_name: newName,
+  profile_picture_url: newPictureUrl
+});
+```
+
+## Profile Screen Cache System
+
+### 1. Get Cached User Profile
+- **Function**: `getCachedUserProfile()`
+- **Location**: `services/users.ts`
+- **Purpose**: Retrieves user profile data with caching layer
+- **Cache Keys**:
+  - user_profile_picture: Profile picture URL
+  - user_display_name: User's display name
+  - user_email: User's email
+- **Flow**:
+  1. Check AsyncStorage for cached data
+  2. If cache exists, return immediately
+  3. If no cache, fetch from database
+  4. Store fetched data in cache
+  5. Return profile data
+- **Returns**: Promise<CachedUserProfile | null>
+- **Usage Example**:
+```typescript
+const cachedProfile = await getCachedUserProfile();
+if (cachedProfile) {
+  setProfileData({
+    name: cachedProfile.displayName,
+    email: cachedProfile.email,
+    profilePicture: { uri: cachedProfile.profilePictureUrl }
+  });
+}
+```
+
+### 2. Clear User Profile Cache
+- **Function**: `clearUserProfileCache()`
+- **Location**: `services/users.ts`
+- **Purpose**: Removes cached profile data on sign out
+- **Parameters**: None
+- **Returns**: Promise<void>
+- **Usage Example**:
+```typescript
+await clearUserProfileCache();
+```
+
+### Profile Screen Implementation
+- **Location**: `app/(tabs)/profile.tsx`
+- **Key Features**:
+  1. Automatic cache loading on component mount
+  2. Loading state management
+  3. Cache clearing on sign out
+  4. Error handling with user alerts
+  5. Animated profile UI elements
+
+### Cache Structure
+```typescript
+interface CachedUserProfile {
+  profilePictureUrl: string;
+  displayName: string;
+  email: string;
+}
+```
+
+### Profile Screen Flow
+1. Initial Load:
+   - Show loading indicator
+   - Attempt to load from cache
+   - Display cached data if available
+   - Hide loading indicator
+
+2. Sign Out:
+   - Show confirmation dialog
+   - Clear cache
+   - Sign out from Supabase
+   - Redirect via _layout.tsx
+
+### Error Handling
+- Cache miss fallback to database
+- Network error alerts
+- Loading state management
+- Graceful degradation with default profile picture
+
+### Performance Considerations
+- Immediate cache response
+- Parallel cache operations
+- Minimal database queries
+- Efficient memory usage
+- Proper cleanup on sign out
+
+## Type Definitions
+
+### UserProfile Interface
+```typescript
+interface UserProfile {
+  id: string;
+  name: string;
+  profile_picture_url: string;
+  created_at: string;
+}
+```
+
+## Database Configuration
+
+### Supabase Client Setup
+- **Location**: `services/supabase.ts`
+- **Configuration**:
+  - Uses environment variables for URL and anon key
+  - Implements AsyncStorage for session persistence
+  - Enables auto refresh token
+  - Disables session detection in URL
+
+## Error Handling
+All database functions include:
+- Error catching and logging
+- Proper TypeScript typing
+- Null checks for missing data
+- Session validation where needed
+
+## Authentication Flow
+1. New User Registration:
+   - Sign Up -> Email Verification -> Profile Creation
+2. Existing User Login:
+   - Sign In -> Session Creation
+3. Session Management:
+   - Auto refresh tokens
+   - Persistent storage
+   - Secure session handling
+
+## Security Considerations
+- All sensitive operations require valid session
+- Password never stored in plain text
+- Email verification required for new accounts
+- Secure token handling
+- Environment variables for sensitive data
+
+1. User Management Functions
+
+createUserProfile(userId: string, display_name: string, profilePictureUrl: string)
+- Creates a new user profile in the users table
+- Parameters:
+  - userId: The unique identifier for the user
+  - display_name: The user's display name
+  - profilePictureUrl: URL to the user's profile picture
+- Returns: UserProfile object
+
+getUserProfile(userId: string)
+- Retrieves a user's profile from the users table
+- Parameters:
+  - userId: The unique identifier for the user
+- Returns: UserProfile object or null
+
+updateUserProfile(userId: string, updates: Partial<UserProfile>)
+- Updates a user's profile information
+- Parameters:
+  - userId: The unique identifier for the user
+  - updates: Object containing fields to update
+- Returns: Updated UserProfile object
+
+2. Group Management Functions
+
+createGroup(leaderId: string)
+- Creates a new group with the specified leader
+- Parameters:
+  - leaderId: User ID of the group leader
+- Returns: Group object or null
+
+getUserGroup(userId: string)
+- Gets the group that a user belongs to
+- Parameters:
+  - userId: The unique identifier for the user
+- Returns: { group: Group | null, isLeader: boolean }
+
+joinGroup(userId: string, joinCode: string)
+- Adds a user to a group using a join code
+- Parameters:
+  - userId: The user trying to join
+  - joinCode: The unique code for the group
+- Returns: Group object or null
+- Validates:
+  - Group is not locked
+  - Group has less than 5 members
+
+leaveGroup(userId: string, groupId: string)
+- Removes a user from a group
+- Parameters:
+  - userId: The user leaving the group
+  - groupId: The group to leave
+- Returns: boolean
+- Side effects:
+  - Reassigns leader if leader is leaving
+  - Updates group ready state
+  - Deletes group if last member
+
+lockGroup(groupId: string)
+- Locks a group to prevent new members from joining
+- Parameters:
+  - groupId: The group to lock
+- Returns: boolean
+
+updateGroupProfile(groupId: string, videoLinks: string[])
+- Updates a group's profile with video links
+- Parameters:
+  - groupId: The group to update
+  - videoLinks: Array of video URLs
+- Returns: boolean
+- Side effects:
+  - Sets is_live to true
+  - Updates updated_at timestamp
+
+getGroupMembers(groupId: string)
+- Gets all members of a group with their profiles
+- Parameters:
+  - groupId: The group to query
+- Returns: Array of group members with user profiles
+
+3. Helper Functions
+
+checkAndUpdateGroupReadyState(groupId: string)
+- Updates group ready state based on member count
+- Parameters:
+  - groupId: The group to check
+- Returns: boolean
+- Side effects:
+  - Updates is_ready based on member count
+  - Resets group state if members < 3
+
+reassignGroupLeader(groupId: string, excludeUserId: string)
+- Assigns a new leader when current leader leaves
+- Parameters:
+  - groupId: The group needing new leader
+  - excludeUserId: The leaving leader's ID
+- Returns: string | null (new leader ID)
+- Logic:
+  - Selects oldest remaining member as new leader
+

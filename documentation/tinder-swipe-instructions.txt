@@ -1,0 +1,139 @@
+import React, { useRef, useState } from 'react';
+import { View, Text, StyleSheet, Dimensions, Image } from 'react-native';
+import { PanGestureHandler, State } from 'react-native-gesture-handler';
+import Animated, {
+  useAnimatedStyle,
+  useSharedValue,
+  withSpring,
+  interpolate,
+  runOnJS,
+  useAnimatedGestureHandler,
+} from 'react-native-reanimated';
+
+const { width, height } = Dimensions.get('window');
+const CARD_WIDTH = width * 0.9;
+const CARD_HEIGHT = height * 0.7;
+const SWIPE_THRESHOLD = 100;
+
+interface CardData {
+  id: string;
+  name: string;
+  age: number;
+  image: string;
+}
+
+interface TinderSwipeCardProps {
+  data: CardData[];
+  onSwipeLeft: (card: CardData) => void;
+  onSwipeRight: (card: CardData) => void;
+}
+
+const TinderSwipeCard: React.FC<TinderSwipeCardProps> = ({ data, onSwipeLeft, onSwipeRight }) => {
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const swipeX = useSharedValue(0);
+  const swipeY = useSharedValue(0);
+
+  const cardStyle = useAnimatedStyle(() => {
+    const rotate = interpolate(swipeX.value, [-200, 0, 200], [-30, 0, 30]);
+    return {
+      transform: [
+        { translateX: swipeX.value },
+        { translateY: swipeY.value },
+        { rotate: `${rotate}deg` },
+      ],
+    };
+  });
+
+  const nextCard = () => {
+    setCurrentIndex((prevIndex) => prevIndex + 1);
+    swipeX.value = withSpring(0);
+    swipeY.value = withSpring(0);
+  };
+
+  const gestureHandler = useAnimatedGestureHandler({
+    onStart: (_, ctx: any) => {
+      ctx.startX = swipeX.value;
+      ctx.startY = swipeY.value;
+    },
+    onActive: (event, ctx) => {
+      swipeX.value = ctx.startX + event.translationX;
+      swipeY.value = ctx.startY + event.translationY;
+    },
+    onEnd: (event) => {
+      if (Math.abs(event.velocityX) > SWIPE_THRESHOLD) {
+        swipeX.value = withSpring(Math.sign(event.velocityX) * width * 1.5);
+        swipeY.value = withSpring(event.velocityY);
+        runOnJS(nextCard)();
+        if (event.velocityX > 0) {
+          runOnJS(onSwipeRight)(data[currentIndex]);
+        } else {
+          runOnJS(onSwipeLeft)(data[currentIndex]);
+        }
+      } else {
+        swipeX.value = withSpring(0);
+        swipeY.value = withSpring(0);
+      }
+    },
+  });
+
+  if (currentIndex >= data.length) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.noMoreCards}>No more cards!</Text>
+      </View>
+    );
+  }
+
+  const card = data[currentIndex];
+
+  return (
+    <View style={styles.container}>
+      <PanGestureHandler onGestureEvent={gestureHandler}>
+        <Animated.View style={[styles.card, cardStyle]}>
+          <Image source={{ uri: card.image }} style={styles.image} />
+          <View style={styles.textContainer}>
+            <Text style={styles.name}>{card.name}, {card.age}</Text>
+          </View>
+        </Animated.View>
+      </PanGestureHandler>
+    </View>
+  );
+};
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  card: {
+    width: CARD_WIDTH,
+    height: CARD_HEIGHT,
+    borderRadius: 10,
+    backgroundColor: 'white',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 3.84,
+    elevation: 5,
+  },
+  image: {
+    width: '100%',
+    height: '80%',
+    borderTopLeftRadius: 10,
+    borderTopRightRadius: 10,
+  },
+  textContainer: {
+    padding: 10,
+  },
+  name: {
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  noMoreCards: {
+    fontSize: 18,
+    fontWeight: 'bold',
+  },
+});
+
+export default TinderSwipeCard;

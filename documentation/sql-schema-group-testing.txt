@@ -1,0 +1,79 @@
+SQL Schema
+1. Groups Table
+sql
+Copy
+CREATE TABLE groups (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  leader_id uuid NOT NULL REFERENCES users(id),
+  join_code text NOT NULL UNIQUE,
+  
+  -- State flags:
+  is_ready boolean DEFAULT false,  -- True when member count >= 3
+  is_live boolean DEFAULT false,   -- True when the leader has completed the profile (e.g. uploaded required videos)
+  is_locked boolean DEFAULT false, -- True when the group is engaged in a dinner party (hosting or attending)
+  
+  -- Profile Information:
+  video_links text[],              -- Array holding video URLs (up to 5, ordered by member slot)
+  
+  -- Dinner party details for host groups:
+  dinnerparty_details jsonb,       -- JSONB data containing date/time/menu, etc.
+  
+  -- Participation tracking:
+  accepted_attendee_group_id uuid REFERENCES groups(id),
+    -- For a host: once a dinner party join request is accepted, store the guest group’s id.
+  attending_host_group_id  uuid REFERENCES groups(id),
+    -- For a guest: store the host group’s id of the dinner party they’re attending.
+  
+  created_at timestamptz DEFAULT now(),
+  updated_at timestamptz DEFAULT now()
+);
+2. Group_Members Table
+sql
+Copy
+CREATE TABLE group_members (
+  group_id uuid NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at timestamptz DEFAULT now(),
+  PRIMARY KEY (group_id, user_id)
+);
+
+How It Works
+Groups Table
+Core Fields:
+
+id: Unique identifier generated automatically.
+leader_id: References the user who created the group (and who is the only one allowed to edit the group profile).
+join_code: A unique code that the leader shares so others can join.
+State Flags:
+
+is_ready:
+Set to true once the group reaches a minimum of 3 members (as checked via the group_members table).
+Set to false if the membership falls below 3.
+is_live:
+Set to true when the leader completes the group profile by uploading the required number of videos.
+Set to false if the group becomes incomplete (e.g., if a member leaves and the video count is no longer valid).
+is_locked:
+Set to true when the group is actively involved in a dinner party (either hosting or attending), preventing further profile edits.
+Profile & Dinner Party Fields:
+
+video_links: Stores video URLs uploaded by the leader for each group member.
+dinnerparty_details: A JSONB field holding event details (date/time, menu, etc.) when the group posts a dinner party.
+accepted_attendee_group_id & attending_host_group_id:
+These fields track dinner party participation. For example, once a host accepts a join request, the host's row is updated with the guest group’s id and vice versa.
+Group_Members Table
+Purpose:
+
+This table creates a many-to-many mapping between groups and users, even though your app restricts users to one group at a time.
+It tracks when a user joined a group (via joined_at), and it is essential for counting members to update flags such as is_ready and is_live.
+
+Group Creation & Membership:
+The leader creates a group (with a unique join code), and is automatically added to group_members. Other users join via the join code, and each join is recorded in group_members.
+
+State Management:
+The group’s state flags (is_ready, is_live, is_locked) are updated based on the number of members and the completeness of the group profile.
+A trigger on group_members ensures that if a member leaves, the group's status is recalculated automatically—including transferring leadership if needed.
+
+Dinner Party Participation:
+Additional fields allow a group to host and/or attend a dinner party. Once active, the group’s profile becomes locked from further edits.
+
+This design ensures data consistency and integrity while keeping your application logic as lean as possible. Let me know if you need any further adjustments or details!
