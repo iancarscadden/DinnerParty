@@ -1,0 +1,4 @@
+New Feature! audio on videos in mapgroupcard.
+
+
+Here is what we want: So basically we want it so that when a user opens a mapgroupcard, the audio for the videos is playing, but here is what we want to do as since there is multiple vides in a card we will need to logic it nicley. So basically the videos in the mapgroupcard are vertically stacked as you can see, one on top of the other and you have to open the card and then scroll down to see the videos. What we want to is is implement a smart algorithm to be placed the audio of the video that the user can see the most of on the screen, so say the user opens the card, they audio for the first video would be playing as that is the one that they can most see, but as they scroll down the video 2 comes more on the screen, now the audio that would be coming through is the audio from that video, and so on for the other videos on the card.

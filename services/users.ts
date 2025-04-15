@@ -12,7 +12,8 @@ const CACHE_KEYS = {
 export async function createUserProfile(
   userId: string,
   display_name: string,
-  profilePictureUrl: string
+  profilePictureUrl: string,
+  phone_num?: string
 ): Promise<UserProfile> {
   try {
     const { data, error } = await supabase
@@ -22,6 +23,7 @@ export async function createUserProfile(
           id: userId,
           display_name,
           profile_picture_url: profilePictureUrl,
+          phone_num,
         },
       ])
       .select()
@@ -132,5 +134,17 @@ export async function clearUserProfileCache(): Promise<void> {
     ]);
   } catch (error) {
     console.error('Error clearing user profile cache:', error);
+  }
+}
+
+export async function updateCachedUserProfile(profile: CachedUserProfile): Promise<void> {
+  try {
+    await Promise.all([
+      AsyncStorage.setItem(CACHE_KEYS.PROFILE_PICTURE, profile.profilePictureUrl),
+      AsyncStorage.setItem(CACHE_KEYS.DISPLAY_NAME, profile.displayName),
+      AsyncStorage.setItem(CACHE_KEYS.EMAIL, profile.email)
+    ]);
+  } catch (error) {
+    console.error('Error updating cached user profile:', error);
   }
 } 

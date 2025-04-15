@@ -1,41 +1,50 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { StyleSheet, View, TouchableOpacity, Text, Animated, Alert } from 'react-native';
-import MapView, { Marker, MapStyleElement, Region } from 'react-native-maps';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { StyleSheet, View, TouchableOpacity, Text, Animated, Alert, Image } from 'react-native';
+import MapView, { Marker, MapStyleElement, Region, Callout } from 'react-native-maps';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { SvgXml } from 'react-native-svg';
+import { Entypo } from '@expo/vector-icons';
 import { useColorScheme, Appearance } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { MapGroupCard } from '../../components/MapGroupCard';
 import { getActiveDinnerParties, getUserGroup, createPartyRequest } from '../../services/groups';
 import { useAuth } from '../../hooks/useAuth';
 
-// Define the SVG content directly as a string
-const mapPinSvg = `<?xml version="1.0" encoding="iso-8859-1"?>
-<svg fill="#4B2E83" height="800px" width="800px" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" 
-   viewBox="0 0 368.553 368.553">
-<g>
-  <path d="M184.277,0c-71.683,0-130,58.317-130,130c0,87.26,119.188,229.855,124.263,235.883c1.417,1.685,3.504,2.66,5.705,2.67
-    c0.011,0,0.021,0,0.032,0c2.189,0,4.271-0.957,5.696-2.621c5.075-5.926,124.304-146.165,124.304-235.932
-    C314.276,58.317,255.96,0,184.277,0z M184.277,190.837c-33.544,0-60.835-27.291-60.835-60.835c0-33.544,27.291-60.835,60.835-60.835
-    c33.544,0,60.835,27.291,60.835,60.835C245.112,163.546,217.821,190.837,184.277,190.837z"/>
-</g>
-</svg>`;
+// Import the custom map pin image
+import MapPinImage from '../../assets/images/DP_map_pin.png';
 
-// SDSU coordinates and campus size
+// Create a reusable map pin component that will be shared across all markers
+const MapPin = React.memo(() => (
+  <View style={styles.markerContainer}>
+    <Image 
+      source={MapPinImage} 
+      style={styles.mapPinImage}
+      resizeMode="contain"
+      fadeDuration={0}
+    />
+  </View>
+));
+
+// Theme color for the app
+const PRIMARY_COLOR = '#4B2E83'; // Purple color
+
+// SDSU coordinates and campus size - Slightly zoomed out to show more area
 const SDSU_REGION = {
   latitude: 32.7757,
   longitude: -117.0719,
-  latitudeDelta: 0.01,
-  longitudeDelta: 0.01,
+  latitudeDelta: 0.025,    // Increased from 0.015 to show more area
+  longitudeDelta: 0.025,   // Increased from 0.015 to show more area
 };
 
-// Define the actual campus boundaries (roughly matching SDSU campus)
+// Define the actual campus boundaries (moderately expanded from SDSU campus)
 const CAMPUS_BOUNDS = {
-  north: 32.7807,  // North edge of campus
-  south: 32.7707,  // South edge of campus
-  east: -117.0669, // East edge of campus
-  west: -117.0769  // West edge of campus
+  north: 32.7907,  // Further expanded north
+  south: 32.7607,  // Further expanded south
+  east: -117.0569, // Further expanded east
+  west: -117.0869  // Further expanded west
 };
+
+// Constants for pin displacement
+const MAX_DISPLACEMENT = 0.0004; // Decreased from 0.0005 (~40 meters instead of ~50 meters)
 
 // Define the type for profile pics to match the modal's expectations
 type ProfilePicType = 'ian' | 'eli' | 'adam';
@@ -111,6 +120,14 @@ interface DinnerPartyWithGroup {
   };
 }
 
+// Interface for a party with its original coordinates
+interface PartyWithDisplayCoords extends DinnerPartyWithGroup {
+  displayCoordinates: {
+    latitude: number;
+    longitude: number;
+  };
+}
+
 export default function MapScreen() {
   const mapRef = useRef<MapView>(null);
   const [selectedParty, setSelectedParty] = useState<DinnerPartyWithGroup | null>(null);
@@ -122,12 +139,51 @@ export default function MapScreen() {
     lastUpdate: Date.now(),
     isWithinCampus: true
   });
-  const [dinnerParties, setDinnerParties] = useState<DinnerPartyWithGroup[]>([]);
+  const [dinnerParties, setDinnerParties] = useState<PartyWithDisplayCoords[]>([]);
   const [userGroup, setUserGroup] = useState<{ group: { id: string; leader_id: string; } | null; isLeader: boolean }>({
     group: null,
     isLeader: false
   });
   const { user } = useAuth();
+  const hasLoadedParties = useRef(false);
+  const [isMapReady, setIsMapReady] = useState(false);
+
+  // Function to add random displacement to coordinates
+  const addDisplacement = (latitude: number, longitude: number) => {
+    // Generate random displacement between -MAX_DISPLACEMENT and +MAX_DISPLACEMENT
+    const latDisplacement = (Math.random() * 2 - 1) * MAX_DISPLACEMENT;
+    const lngDisplacement = (Math.random() * 2 - 1) * MAX_DISPLACEMENT;
+    
+    return {
+      latitude: latitude + latDisplacement,
+      longitude: longitude + lngDisplacement
+    };
+  };
+
+  // Function to fetch dinner parties
+  const fetchDinnerParties = useCallback(async () => {
+    if (!user?.id) return;
+    
+    try {
+      console.log('Fetching dinner parties...');
+      const parties = await getActiveDinnerParties();
+      
+      // Add random displacement to each party's coordinates
+      const partiesWithDisplacement = parties.map(party => ({
+        ...party,
+        displayCoordinates: addDisplacement(
+          party.party.latitude,
+          party.party.longitude
+        )
+      }));
+      
+      setDinnerParties(partiesWithDisplacement);
+      hasLoadedParties.current = true;
+      console.log(`Loaded ${partiesWithDisplacement.length} dinner parties`);
+    } catch (error) {
+      console.error('Failed to fetch dinner parties:', error);
+    }
+  }, [user?.id]);
 
   // Fetch user's group info when tab is focused
   useFocusEffect(
@@ -149,22 +205,58 @@ export default function MapScreen() {
     }, [user?.id])
   );
 
-  // Fetch dinner parties when tab is focused
+  // Pre-load the map pin image
+  useEffect(() => {
+    // Force image caching by creating a dummy image and loading it
+    Image.prefetch(Image.resolveAssetSource(MapPinImage).uri);
+  }, []);
+
+  // Fetch dinner parties only once when the component mounts
+  useEffect(() => {
+    if (!user?.id || hasLoadedParties.current) return;
+    fetchDinnerParties();
+  }, [user?.id, fetchDinnerParties]);
+
+  // Always reload dinner parties when the tab is focused
   useFocusEffect(
     useCallback(() => {
-      async function fetchDinnerParties() {
-        if (!user?.id) return;
-        try {
-          const parties = await getActiveDinnerParties();
-          setDinnerParties(parties);
-        } catch (error) {
-          console.error('Failed to fetch dinner parties:', error);
-        }
+      // When the tab is focused, fetch the latest dinner parties
+      if (user?.id) {
+        console.log('Tab focused, fetching dinner parties...');
+        fetchDinnerParties();
       }
-
-      fetchDinnerParties();
-    }, [user?.id])
+      
+      // When the tab loses focus, clear the dinner parties
+      return () => {
+        console.log('Tab unfocused, clearing dinner parties...');
+        setDinnerParties([]);
+        setSelectedParty(null); // Clear selected party to prevent stale data
+      };
+    }, [user?.id, fetchDinnerParties])
   );
+
+  // Add a check to ensure parties are loaded when map is ready
+  useEffect(() => {
+    if (isMapReady && user?.id && dinnerParties.length === 0 && !hasLoadedParties.current) {
+      console.log('Map is ready but no parties loaded. Attempting to fetch parties...');
+      fetchDinnerParties();
+    }
+  }, [isMapReady, user?.id, dinnerParties.length, fetchDinnerParties]);
+
+  // Use memo to prevent unnecessary re-rendering of markers
+  const memoizedMarkers = useMemo(() => {
+    return dinnerParties.map((partyData) => (
+      <Marker
+        key={partyData.party.id}
+        coordinate={partyData.displayCoordinates}
+        onPress={() => setSelectedParty(partyData)}
+        tracksViewChanges={false}
+        anchor={{ x: 0.5, y: 1.0 }}
+      >
+        <MapPin />
+      </Marker>
+    ));
+  }, [dinnerParties]);
 
   useEffect(() => {
     const updateBrightness = () => {
@@ -197,8 +289,8 @@ export default function MapScreen() {
 
   // Check if we're zoomed too far out
   const isZoomTooFarOut = (region: Region): boolean => {
-    // If zoomed out beyond 2x the initial zoom level
-    return region.latitudeDelta > SDSU_REGION.latitudeDelta * 2;
+    // If zoomed out beyond 3x the initial zoom level (increased from 2x)
+    return region.latitudeDelta > SDSU_REGION.latitudeDelta * 3;
   };
 
   // Check if we're centered on campus
@@ -207,9 +299,9 @@ export default function MapScreen() {
     const lngDiff = Math.abs(region.longitude - SDSU_REGION.longitude);
     
     return (
-      latDiff < 0.005 && // About 500m
-      lngDiff < 0.005 && 
-      region.latitudeDelta <= SDSU_REGION.latitudeDelta * 1.5
+      latDiff < 0.008 && // Increased from 0.005 (~800m instead of ~500m)
+      lngDiff < 0.008 && // Increased from 0.005
+      region.latitudeDelta <= SDSU_REGION.latitudeDelta * 2 // Increased from 1.5
     );
   };
 
@@ -262,7 +354,15 @@ export default function MapScreen() {
         Alert.alert(
           "No Group",
           "You need to be in a group to request to attend a dinner party.",
-          [{ text: "OK" }]
+          [{ 
+            text: "OK",
+            onPress: () => {
+              // Add delay to ensure animations have time to reset
+              setTimeout(() => {
+                setSelectedParty(null);
+              }, 100);
+            }
+          }]
         );
         return;
       }
@@ -271,7 +371,15 @@ export default function MapScreen() {
         Alert.alert(
           "Not Group Leader",
           "Only the group leader can request to attend dinner parties.",
-          [{ text: "OK" }]
+          [{ 
+            text: "OK",
+            onPress: () => {
+              // Add delay to ensure animations have time to reset
+              setTimeout(() => {
+                setSelectedParty(null);
+              }, 100);
+            } 
+          }]
         );
         return;
       }
@@ -282,12 +390,40 @@ export default function MapScreen() {
       Alert.alert(
         "Request Sent",
         "Your request to join this dinner party has been sent!",
-        [{ text: "OK", onPress: () => setSelectedParty(null) }]
+        [{ 
+          text: "OK", 
+          onPress: () => {
+            // Add delay to ensure animations have time to reset
+            setTimeout(() => {
+              setSelectedParty(null);
+            }, 100);
+          } 
+        }]
       );
     } catch (error: any) {
       // Handle specific error messages
-      const errorMessage = error.message || 'Failed to send request. Please try again.';
-      Alert.alert("Error", errorMessage);
+      let errorMessage = error.message || 'Failed to send request. Please try again.';
+      let errorTitle = "Error";
+      
+      // Provide more user-friendly messages for common errors
+      if (errorMessage.includes('needs to be finalized')) {
+        errorTitle = "Incomplete Group Profile";
+        errorMessage = "Your group profile needs to be completed before joining dinner parties. Please make sure your group has at least 3 members and has uploaded videos.";
+      }
+      
+      Alert.alert(
+        errorTitle, 
+        errorMessage,
+        [{ 
+          text: "OK",
+          onPress: () => {
+            // Add delay to ensure animations have time to reset
+            setTimeout(() => {
+              setSelectedParty(null);
+            }, 100);
+          } 
+        }]
+      );
     }
   };
 
@@ -305,19 +441,9 @@ export default function MapScreen() {
           showsIndoors={false}
           showsCompass={false}
           onRegionChangeComplete={handleRegionChange}
+          onMapReady={() => setIsMapReady(true)}
         >
-          {dinnerParties.map((partyData) => (
-            <Marker
-              key={partyData.party.id}
-              coordinate={{
-                latitude: partyData.party.latitude,
-                longitude: partyData.party.longitude,
-              }}
-              onPress={() => setSelectedParty(partyData)}
-            >
-              <SvgXml xml={mapPinSvg} width={35} height={35} />
-            </Marker>
-          ))}
+          {memoizedMarkers}
         </MapView>
 
         <Animated.View 
@@ -366,7 +492,15 @@ export default function MapScreen() {
               Alert.alert(
                 "Can't Join Own Party",
                 "This is your group's dinner party!",
-                [{ text: "OK", onPress: () => setSelectedParty(null) }]
+                [{ 
+                  text: "OK", 
+                  onPress: () => {
+                    // Add delay to ensure animations have time to reset
+                    setTimeout(() => {
+                      setSelectedParty(null);
+                    }, 100);
+                  } 
+                }]
               );
               return;
             }
@@ -392,6 +526,10 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  customMarker: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   returnButtonContainer: {
     position: 'absolute',
     bottom: 20,
@@ -399,7 +537,7 @@ const styles = StyleSheet.create({
     width: 'auto',
   },
   returnButton: {
-    backgroundColor: '#4B2E83',
+    backgroundColor: PRIMARY_COLOR,
     paddingHorizontal: 20,
     paddingVertical: 12,
     borderRadius: 8,
@@ -416,5 +554,15 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  markerContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 39,
+    height: 39,
+  },
+  mapPinImage: {
+    width: 39,
+    height: 39,
   },
 }); 

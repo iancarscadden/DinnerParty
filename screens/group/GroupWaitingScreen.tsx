@@ -40,6 +40,7 @@ export function GroupWaitingScreen({
   const [isLocking, setIsLocking] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
   const router = useRouter();
   const [members, setMembers] = useState<Array<{
     user_id: string;
@@ -51,7 +52,67 @@ export function GroupWaitingScreen({
 
   useEffect(() => {
     loadMembers();
-  }, []);
+    
+    // Setup real-time subscriptions
+    const setupSubscription = () => {
+      if (subscribed) return;
+      
+      console.log('Setting up GroupWaitingScreen real-time subscriptions for group:', groupId);
+      
+      // Subscribe to group_members changes
+      const memberSubscription = supabase
+        .channel('waiting_member_updates')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'group_members',
+          filter: `group_id=eq.${groupId}`
+        }, () => {
+          console.log('Group members changed in waiting screen, reloading members');
+          loadMembers(false); // Don't show loading indicator for real-time updates
+        })
+        .subscribe();
+
+      // Subscribe to groups changes
+      const groupSubscription = supabase
+        .channel('waiting_group_updates')
+        .on('postgres_changes', {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'groups',
+          filter: `id=eq.${groupId}`
+        }, (payload) => {
+          console.log('Group updated in waiting screen:', payload.new);
+          
+          // If group becomes locked, automatically navigate to setup
+          if (payload.new.is_locked) {
+            console.log('Group is now locked, refreshing to show setup screen');
+            router.replace('/(tabs)/social');
+          }
+        })
+        .subscribe();
+
+      setSubscribed(true);
+      
+      return () => {
+        memberSubscription.unsubscribe();
+        groupSubscription.unsubscribe();
+        setSubscribed(false);
+      };
+    };
+    
+    setupSubscription();
+    
+    // Cleanup on unmount
+    return () => {
+      if (subscribed) {
+        console.log('Cleaning up GroupWaitingScreen subscriptions');
+        supabase.channel('waiting_member_updates').unsubscribe();
+        supabase.channel('waiting_group_updates').unsubscribe();
+        setSubscribed(false);
+      }
+    };
+  }, [groupId]);
 
   // Add effect to respond to parent refreshing state
   useEffect(() => {
@@ -60,8 +121,12 @@ export function GroupWaitingScreen({
     }
   }, [parentRefreshing]);
 
-  const loadMembers = async () => {
+  const loadMembers = async (showLoading = true) => {
     try {
+      if (showLoading) {
+        setLoading(true);
+      }
+      
       const memberData = await getGroupMembers(groupId);
       setMembers(memberData);
       setIsReady(memberData.length >= 3);

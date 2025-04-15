@@ -16,6 +16,7 @@ import { CreatePartyForm } from '../components/CreatePartyForm';
 import { DinnerParty } from '../services/groups';
 import { SvgXml } from 'react-native-svg';
 import { RequestingGroupsSwiper } from '../components/RequestingGroupsSwiper';
+import { AttendGroupCard } from '../components/AttendGroupCard';
 
 /* Card swiping implementation saved for later
 import Animated, { useSharedValue, withSpring, FadeIn, FadeOut, withTiming } from 'react-native-reanimated';
@@ -72,39 +73,71 @@ export default function HostScreen() {
 
   const checkGroupStatus = async () => {
     try {
+      console.log('[HostScreen] Starting checkGroupStatus');
       setLoading(true);
       const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      if (!user) {
+        console.log('[HostScreen] No authenticated user found');
+        return;
+      }
+      console.log('[HostScreen] User authenticated, id:', user.id);
 
       const { group: userGroup, isLeader: userIsLeader } = await getUserGroup(user.id);
+      console.log('[HostScreen] getUserGroup result:', { 
+        groupExists: !!userGroup, 
+        isLeader: userIsLeader,
+        groupId: userGroup?.id
+      });
+      
       setGroup(userGroup);
       setIsLeader(userIsLeader);
 
       if (userGroup) {
         // Check if group has an active dinner party
+        console.log('[HostScreen] Checking for active dinner party for group:', userGroup.id);
         const partyData = await getGroupDinnerParty(userGroup.id);
+        console.log('[HostScreen] Dinner party data:', { 
+          partyExists: !!partyData,
+          partyId: partyData?.id
+        });
+        
         setActiveParty(partyData);
 
         if (partyData) {
           // Check for party requests
+          console.log('[HostScreen] Checking for party requests');
           const requests = await getPartyRequests(userGroup.id);
           const hasNewRequests = requests.length > 0;
+          console.log('[HostScreen] Party requests:', { 
+            count: requests.length,
+            hasNewRequests,
+            hasAcceptedAttendee: !!userGroup.accepted_attendee_group_id
+          });
+          
           setHasRequests(hasNewRequests);
           setShowRequests(hasNewRequests && !userGroup.accepted_attendee_group_id);
           
           // If we have an attendee, get their info
           if (userGroup.accepted_attendee_group_id) {
+            console.log('[HostScreen] Group has an attendee, getting attendee info:', userGroup.accepted_attendee_group_id);
             const attendeeGroupInfo = await getAttendeeGroupInfo(userGroup.id);
+            console.log('[HostScreen] Attendee group info:', { 
+              infoRetrieved: !!attendeeGroupInfo,
+              attendeeGroupId: attendeeGroupInfo?.attendeeGroup?.id
+            });
+            
             setAttendeeInfo(attendeeGroupInfo);
           } else {
+            console.log('[HostScreen] No accepted attendee for this group');
             setAttendeeInfo(null);
           }
         }
       }
     } catch (error) {
-      console.error('Error checking group status:', error);
+      console.error('[HostScreen] Error in checkGroupStatus:', error);
       Alert.alert('Error', 'Failed to check group status. Please try again.');
     } finally {
+      console.log('[HostScreen] checkGroupStatus completed');
       setLoading(false);
     }
   };
@@ -139,9 +172,15 @@ export default function HostScreen() {
   };
 
   const handleRequestAccepted = () => {
+    console.log('[HostScreen] handleRequestAccepted called, will refresh group status after delay');
     // Refresh the group status to update UI with the new attendant
     setTimeout(() => {
-      checkGroupStatus();
+      console.log('[HostScreen] Timeout elapsed, now calling checkGroupStatus');
+      checkGroupStatus().then(() => {
+        console.log('[HostScreen] checkGroupStatus completed after accepting request');
+      }).catch(error => {
+        console.error('[HostScreen] Error refreshing group status after accepting request:', error);
+      });
     }, 1000); // Small delay to ensure database updates are complete
   };
 
@@ -219,139 +258,125 @@ export default function HostScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {!group && (
-          <View style={styles.messageContainer}>
-            <View style={styles.iconPlaceholder}>
-              <SvgXml xml={houseSvg} width={40} height={40} />
+      {group && group.is_live && activeParty && attendeeInfo && attendeeInfo.attendeeGroup ? (
+        <View style={styles.hostWithAttendeeContainer}>
+          <AttendGroupCard
+            group={{
+              hostName: attendeeInfo.attendeeGroup.leader.display_name,
+              phoneNumber: attendeeInfo.attendeeGroup.leader.phone_num || '0000000000',
+              members: (attendeeInfo.attendeeGroup.members || []).map((member: any) => ({
+                name: member.user.display_name,
+                profilePic: member.user.profile_picture_url
+              })),
+              menu: {
+                entree: activeParty.main_dish,
+                sides: [activeParty.side]
+              },
+              videoLinks: attendeeInfo.attendeeGroup.video_links || []
+            }}
+            brightness={1}
+            onCancelAttendance={handleCancelAttendant}
+            screenContext="host"
+          />
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          {!group && (
+            <View style={styles.messageContainer}>
+              <View style={styles.iconPlaceholder}>
+                <SvgXml xml={houseSvg} width={40} height={40} />
+              </View>
+              <Text style={styles.messageTitle}>No Group Found</Text>
+              <Text style={styles.message}>
+                You need to be in a group with a complete profile to host a party.
+              </Text>
             </View>
-            <Text style={styles.messageTitle}>No Group Found</Text>
-            <Text style={styles.message}>
-              You need to be in a group with a complete profile to host a party.
-            </Text>
-          </View>
-        )}
+          )}
 
-        {group && !group.is_live && (
-          <View style={styles.messageContainer}>
-            <View style={styles.iconPlaceholder}>
-              <SvgXml xml={clipboardSvg} width={40} height={40} />
+          {group && !group.is_live && (
+            <View style={styles.messageContainer}>
+              <View style={styles.iconPlaceholder}>
+                <SvgXml xml={clipboardSvg} width={40} height={40} />
+              </View>
+              <Text style={styles.messageTitle}>Profile Incomplete</Text>
+              <Text style={styles.message}>
+                Your group needs to complete its profile before hosting a party.
+              </Text>
             </View>
-            <Text style={styles.messageTitle}>Profile Incomplete</Text>
-            <Text style={styles.message}>
-              Your group needs to complete its profile before hosting a party.
-            </Text>
-          </View>
-        )}
+          )}
 
-        {group && group.is_live && activeParty && (
-          <View style={styles.activePartyContainer}>
-            <View style={styles.partyHeaderContainer}>
-              <Text style={styles.partyTitle}>Your Active Party</Text>
-              <View style={styles.activeBadge}>
-                <Text style={styles.activeBadgeText}>ACTIVE</Text>
-              </View>
-            </View>
-            
-            <View style={styles.partyDetailsCard}>
-              <View style={styles.partyDetailRow}>
-                <Text style={styles.partyDetailLabel}>Main Dish:</Text>
-                <Text style={styles.partyDetailValue}>{activeParty.main_dish}</Text>
-              </View>
-              
-              <View style={styles.partyDetailRow}>
-                <Text style={styles.partyDetailLabel}>Side Dish:</Text>
-                <Text style={styles.partyDetailValue}>{activeParty.side}</Text>
-              </View>
-              
-              <View style={styles.partyDetailRow}>
-                <Text style={styles.partyDetailLabel}>Location:</Text>
-                <Text style={styles.partyDetailValue}>{activeParty.address}</Text>
-              </View>
-            </View>
-            
-            {attendeeInfo && attendeeInfo.attendeeGroup ? (
-              <View style={styles.attendeeContainer}>
-                <Text style={styles.attendeeTitle}>Attending Group</Text>
-                
-                <View style={styles.attendeeDetailsCard}>
-                  <View style={styles.attendeeLeaderRow}>
-                    <Image 
-                      source={{ uri: attendeeInfo.attendeeGroup.leader.profile_picture_url }}
-                      style={styles.leaderImage}
-                    />
-                    <Text style={styles.leaderName}>
-                      {attendeeInfo.attendeeGroup.leader.display_name}'s Group
-                    </Text>
-                  </View>
-                  
-                  <View style={styles.membersContainer}>
-                    {attendeeInfo.attendeeGroup.members.map((member: any, index: number) => (
-                      <View key={index} style={styles.memberItem}>
-                        <Image 
-                          source={{ uri: member.user.profile_picture_url }}
-                          style={styles.memberImage}
-                        />
-                        <Text style={styles.memberName}>{member.user.display_name}</Text>
-                      </View>
-                    ))}
-                  </View>
-                  
-                  {isLeader && (
-                    <TouchableOpacity
-                      style={styles.cancelButton}
-                      onPress={handleCancelAttendant}
-                    >
-                      <Text style={styles.cancelButtonText}>Remove Attendee</Text>
-                    </TouchableOpacity>
-                  )}
+          {group && group.is_live && activeParty && (
+            <View style={styles.activePartyContainer}>
+              <View style={styles.partyHeaderContainer}>
+                <Text style={styles.partyTitle}>Your Active Party</Text>
+                <View style={styles.activeBadge}>
+                  <Text style={styles.activeBadgeText}>ACTIVE</Text>
                 </View>
               </View>
-            ) : hasRequests ? (
-              <TouchableOpacity
-                style={styles.viewRequestsButton}
-                onPress={() => setShowRequests(true)}
-              >
-                <Text style={styles.viewRequestsText}>View Party Requests</Text>
-              </TouchableOpacity>
-            ) : (
-              <Text style={styles.partyMessage}>
-                Your party is active! Requests from other groups will appear here.
-              </Text>
-            )}
-          </View>
-        )}
+              
+              <View style={styles.partyDetailsCard}>
+                <View style={styles.partyDetailRow}>
+                  <Text style={styles.partyDetailLabel}>Main Dish:</Text>
+                  <Text style={styles.partyDetailValue}>{activeParty.main_dish}</Text>
+                </View>
+                
+                <View style={styles.partyDetailRow}>
+                  <Text style={styles.partyDetailLabel}>Side Dish:</Text>
+                  <Text style={styles.partyDetailValue}>{activeParty.side}</Text>
+                </View>
+                
+                <View style={styles.partyDetailRow}>
+                  <Text style={styles.partyDetailLabel}>Location:</Text>
+                  <Text style={styles.partyDetailValue}>{activeParty.address}</Text>
+                </View>
+              </View>
+              
+              {hasRequests ? (
+                <TouchableOpacity
+                  style={styles.viewRequestsButton}
+                  onPress={() => setShowRequests(true)}
+                >
+                  <Text style={styles.viewRequestsText}>View Party Requests</Text>
+                </TouchableOpacity>
+              ) : (
+                <Text style={styles.partyMessage}>
+                  Your party is active! Requests from other groups will appear here.
+                </Text>
+              )}
+            </View>
+          )}
 
-        {group && group.is_live && !activeParty && (
-          <View style={styles.hostButtonContainer}>
-            {isLeader ? (
-              <>
-                <Text style={styles.hostInfoText}>
-                  As the group leader, you can host a dinner party for other groups to join.
-                </Text>
-                <TouchableOpacity
-                  style={styles.hostButton}
-                  onPress={handleHostParty}
-                >
-                  <Text style={styles.hostButtonText}>Host a Dinner Party</Text>
-                </TouchableOpacity>
-              </>
-            ) : (
-              <>
-                <Text style={styles.hostInfoText}>
-                  Only the group leader can host a dinner party.
-                </Text>
-                <TouchableOpacity
-                  style={[styles.hostButton, styles.disabledButton]}
-                  disabled={true}
-                >
-                  <Text style={[styles.hostButtonText, styles.disabledText]}>Only Leader Can Host</Text>
-                </TouchableOpacity>
-              </>
-            )}
-          </View>
-        )}
-      </ScrollView>
+          {group && group.is_live && !activeParty && (
+            <View style={styles.hostButtonContainer}>
+              {isLeader ? (
+                <>
+                  <Text style={styles.hostInfoText}>
+                    As the group leader, you can host a dinner party for other groups to join.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.hostButton}
+                    onPress={handleHostParty}
+                  >
+                    <Text style={styles.hostButtonText}>Host a Dinner Party</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.hostInfoText}>
+                    Only the group leader can host a dinner party.
+                  </Text>
+                  <TouchableOpacity
+                    style={[styles.hostButton, styles.disabledButton]}
+                    disabled={true}
+                  >
+                    <Text style={[styles.hostButtonText, styles.disabledText]}>Only Leader Can Host</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+            </View>
+          )}
+        </ScrollView>
+      )}
     </SafeAreaView>
   );
 }
@@ -508,74 +533,17 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
-  attendeeContainer: {
-    marginTop: 20,
-  },
-  attendeeTitle: {
-    fontSize: 20,
-    fontWeight: '600',
-    color: '#4B2E83',
-    marginBottom: 15,
-  },
-  attendeeDetailsCard: {
-    backgroundColor: '#f9f9f9',
-    borderRadius: 12,
+  hostWithAttendeeContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: 20,
-    borderWidth: 1,
-    borderColor: '#eee',
   },
-  attendeeLeaderRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 20,
-  },
-  leaderImage: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    marginRight: 15,
-  },
-  leaderName: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#333',
-  },
-  membersContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginBottom: 20,
-  },
-  memberItem: {
-    alignItems: 'center',
-    marginRight: 15,
-    marginBottom: 15,
-    width: 70,
-  },
-  memberImage: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    marginBottom: 5,
-  },
-  memberName: {
-    fontSize: 12,
-    color: '#666',
-    textAlign: 'center',
-  },
-  cancelButton: {
-    backgroundColor: '#fff',
-    borderWidth: 2,
-    borderColor: '#4B2E83',
-    borderRadius: 10,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
-    alignItems: 'center',
-    alignSelf: 'center',
-    marginTop: 10,
-  },
-  cancelButtonText: {
+  acceptedGroupTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
     color: '#4B2E83',
-    fontSize: 16,
-    fontWeight: '600',
+    marginBottom: 20,
+    textAlign: 'center',
   },
 }); 

@@ -51,12 +51,20 @@ export function RequestingGroupsSwiper({ hostGroupId, onRequestsCleared, onReque
 
   const loadRequests = async () => {
     try {
+      console.log('[RequestingGroupsSwiper] Starting to load requests for hostGroupId:', hostGroupId);
       setLoading(true);
       const partyRequests = await getPartyRequests(hostGroupId);
+      console.log('[RequestingGroupsSwiper] Loaded party requests:', { 
+        count: partyRequests.length,
+        requestIds: partyRequests.map(req => req.request.id),
+        groupIds: partyRequests.map(req => req.requestingGroup.id)
+      });
+      
       setRequests(partyRequests);
       setIsFinished(partyRequests.length === 0);
+      console.log('[RequestingGroupsSwiper] Requests state updated, isFinished:', partyRequests.length === 0);
     } catch (error) {
-      console.error('Error loading party requests:', error);
+      console.error('[RequestingGroupsSwiper] Error loading party requests:', error);
       Alert.alert('Error', 'Failed to load party requests. Please try again.');
     } finally {
       setLoading(false);
@@ -90,6 +98,13 @@ export function RequestingGroupsSwiper({ hostGroupId, onRequestsCleared, onReque
 
   const handleSwipeRight = async () => {
     const currentRequest = requests[currentIndex];
+    console.log('[RequestingGroupsSwiper] handleSwipeRight called for request:', {
+      requestId: currentRequest.request.id,
+      requestingGroupId: currentRequest.requestingGroup.id,
+      leaderName: currentRequest.requestingGroup.leader.display_name,
+      currentIndex
+    });
+    
     Alert.alert(
       'Accept Group',
       'You can only accept one group to attend. Are you sure?',
@@ -98,6 +113,7 @@ export function RequestingGroupsSwiper({ hostGroupId, onRequestsCleared, onReque
           text: 'Cancel', 
           style: 'cancel', 
           onPress: () => {
+            console.log('[RequestingGroupsSwiper] Accept dialog canceled');
             translateX.value = withSpring(0, { 
               stiffness: 100, 
               damping: 20,
@@ -110,19 +126,25 @@ export function RequestingGroupsSwiper({ hostGroupId, onRequestsCleared, onReque
           text: 'Accept',
           onPress: async () => {
             try {
+              console.log('[RequestingGroupsSwiper] Accepting request:', currentRequest.request.id);
               await acceptPartyRequest(currentRequest.request.id);
+              console.log('[RequestingGroupsSwiper] Request accepted successfully, starting animations');
+              
               translateX.value = withSpring(width * 1.5, { 
                 stiffness: 100, 
                 damping: 20,
                 velocity: 1
               });
               glowOpacity.value = withTiming(0, { duration: 200 });
+              
               setTimeout(() => {
+                console.log('[RequestingGroupsSwiper] Animation timeout complete, updating UI state');
                 setIsAccepted(true);
+                console.log('[RequestingGroupsSwiper] Calling onRequestAccepted callback');
                 onRequestAccepted?.();
               }, SWIPE_DURATION);
             } catch (error) {
-              console.error('Error accepting party request:', error);
+              console.error('[RequestingGroupsSwiper] Error accepting party request:', error);
               Alert.alert('Error', 'Failed to accept party request. Please try again.');
               translateX.value = withSpring(0);
               glowOpacity.value = withTiming(0, { duration: 200 });

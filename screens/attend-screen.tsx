@@ -103,18 +103,23 @@ export default function AttendScreen() {
     // Prepare group data for the card
     const cardData = {
       hostName: hostLeader.display_name || 'Host',
-      phoneNumber: hostLeader.phone_number || '0000000000',
+      phoneNumber: hostLeader.phone_num || '0000000000', // Use leader's phone number if available
       members: (hostGroup.members || []).map((member: any) => ({
         name: member.user.display_name,
-        profilePic: member.user.profile_picture_url
+        profilePic: member.user.profile_picture_url || ''
       })),
-      date: dinnerParty.date || 'TBD',
-      time: dinnerParty.time || 'TBD',
       menu: {
         entree: dinnerParty.main_dish || 'TBD',
         sides: [dinnerParty.side || 'TBD']
-      }
+      },
+      videoLinks: hostGroup.video_links || [] // Add the video links from the host group
     };
+    
+    console.log('Attend card data:', JSON.stringify({
+      ...cardData,
+      members: cardData.members.length,
+      hasVideos: (cardData.videoLinks || []).length > 0
+    }));
     
     return (
       <SafeAreaView style={styles.container}>
@@ -125,6 +130,7 @@ export default function AttendScreen() {
             onCancelAttendance={isLeader ? handleCancelAttendance : () => {
               Alert.alert('Not Authorized', 'Only the group leader can cancel attendance.');
             }}
+            screenContext="attend"
           />
         </View>
       </SafeAreaView>

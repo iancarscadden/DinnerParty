@@ -14,6 +14,12 @@ export default function GroupScreen() {
   const [isLeader, setIsLeader] = useState(false);
   const [memberCount, setMemberCount] = useState<number>(0);
   const [subscribed, setSubscribed] = useState(false);
+  // Add a ref to track previous group state for detecting transitions
+  const previousGroupState = React.useRef<{
+    is_ready?: boolean;
+    is_locked?: boolean;
+    is_live?: boolean;
+  }>({});
 
   // Setup subscription when component mounts
   useEffect(() => {
@@ -23,15 +29,42 @@ export default function GroupScreen() {
       // Cleanup subscription on unmount
       cleanupSubscription();
     };
-  }, []);
+  }, [group?.id]); // Re-setup when group changes
 
   // Load initial state
   useEffect(() => {
     loadGroupState();
   }, []);
 
+  // Track state transitions for UI updates
+  useEffect(() => {
+    if (!group) return;
+    
+    // Check for state transitions
+    if (previousGroupState.current.is_locked !== group.is_locked && group.is_locked) {
+      console.log('Group state transition: Group is now locked');
+      // Reset any lingering refresh states
+      setRefreshing(false);
+    }
+    
+    if (previousGroupState.current.is_live !== group.is_live && group.is_live) {
+      console.log('Group state transition: Group is now live');
+      // Reset any lingering refresh states
+      setRefreshing(false);
+    }
+    
+    // Store current state for future comparison
+    previousGroupState.current = {
+      is_ready: group.is_ready,
+      is_locked: group.is_locked,
+      is_live: group.is_live
+    };
+  }, [group?.is_ready, group?.is_locked, group?.is_live]);
+
   const setupSubscription = () => {
-    if (subscribed) return;
+    if (subscribed || !group?.id) return;
+    
+    console.log('Setting up real-time subscriptions for group:', group?.id);
     
     // Subscribe to group_members changes to detect when members join/leave
     const memberSubscription = supabase
@@ -40,9 +73,11 @@ export default function GroupScreen() {
         event: '*',
         schema: 'public',
         table: 'group_members',
-      }, () => {
-        console.log('Group members changed, refreshing state');
-        loadGroupState();
+        filter: `group_id=eq.${group.id}` // Only listen to this group's members
+      }, (payload) => {
+        console.log('Group members changed:', payload);
+        // Just update member count instead of full state reload
+        loadMemberCount();
       })
       .subscribe();
 
@@ -50,12 +85,14 @@ export default function GroupScreen() {
     const groupSubscription = supabase
       .channel('group_updates')
       .on('postgres_changes', {
-        event: '*',
+        event: 'UPDATE',
         schema: 'public',
         table: 'groups',
-      }, () => {
-        console.log('Group updated, refreshing state');
-        loadGroupState();
+        filter: `id=eq.${group.id}` // Only listen to this specific group
+      }, (payload) => {
+        console.log('Group updated:', payload.new);
+        // Use the new handler for consistent UI updates
+        handleRealtimeUpdate(payload.new);
       })
       .subscribe();
 
@@ -72,6 +109,23 @@ export default function GroupScreen() {
     // This is a placeholder for cleanup logic
     // The actual cleanup happens in the useEffect return function
     setSubscribed(false);
+  };
+
+  // New function to load just the member count
+  const loadMemberCount = async () => {
+    if (!group?.id) return;
+    
+    try {
+      const { count } = await supabase
+        .from('group_members')
+        .select('*', { count: 'exact' })
+        .eq('group_id', group.id);
+        
+      console.log('Updated member count:', count);
+      setMemberCount(count || 0);
+    } catch (error) {
+      console.error('Error loading member count:', error);
+    }
   };
 
   const loadGroupState = async () => {
@@ -102,6 +156,11 @@ export default function GroupScreen() {
         setMemberCount(count || 0);
         setGroup(userGroup);
         setIsLeader(userIsLeader);
+        
+        // Set up subscriptions with the new group ID
+        if (!subscribed && userGroup.id) {
+          setupSubscription();
+        }
       } else {
         console.log('No group found for user');
         setGroup(null);
@@ -141,6 +200,21 @@ export default function GroupScreen() {
     setMemberCount(0);
     // Force a refresh of the group state
     loadGroupState();
+  };
+
+  // Handler for real-time updates to ensure UI is consistent
+  const handleRealtimeUpdate = (groupData: any) => {
+    console.log('Processing real-time update:', groupData);
+    
+    // Update state without a full reload
+    setGroup(prev => {
+      if (!prev) return groupData as Group;
+      return {...prev, ...groupData} as Group;
+    });
+    
+    // Reset any loading indicators
+    setLoading(false);
+    setRefreshing(false);
   };
 
   if (loading && !refreshing) {

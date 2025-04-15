@@ -1,18 +1,48 @@
-import React, { useState } from 'react';
-import { StyleSheet, View, Text, TextInput, TouchableOpacity, Alert, Image, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { StyleSheet, View, Text, TextInput, TouchableOpacity, Alert, Image, ActivityIndicator, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
 import { supabase } from '../../services/supabase';
-import { createUserProfile } from '../../services/users';
+import { createUserProfile, getUserProfile } from '../../services/users';
 import { decode } from 'base64-arraybuffer';
+import { useAuth } from '../../services/auth';
 
 export default function ProfileScreen() {
   const router = useRouter();
+  const { setProfileComplete, user } = useAuth();
   const [name, setName] = useState('');
   const [profilePicture, setProfilePicture] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [loading, setLoading] = useState(true);
   const [uploadProgress, setUploadProgress] = useState(0);
+
+  // Check if user already has a profile
+  useEffect(() => {
+    const checkExistingProfile = async () => {
+      if (!user) return;
+      
+      try {
+        console.log('Checking for existing profile for user:', user.id);
+        const userProfile = await getUserProfile(user.id);
+        
+        if (userProfile && userProfile.display_name && userProfile.profile_picture_url) {
+          console.log('Existing profile found, redirecting to main app');
+          // Profile exists, set profile complete flag and redirect
+          await setProfileComplete(true);
+          router.replace('/(tabs)/map');
+        } else {
+          console.log('No existing profile found, showing setup form');
+          setLoading(false);
+        }
+      } catch (error) {
+        console.error('Error checking existing profile:', error);
+        setLoading(false);
+      }
+    };
+    
+    checkExistingProfile();
+  }, [user]);
 
   const pickImage = async () => {
     try {
@@ -38,6 +68,29 @@ export default function ProfileScreen() {
     }
   };
 
+  // Format the phone number as user types (XXX) XXX-XXXX
+  const formatPhoneNumber = (text: string) => {
+    // Strip all non-numeric characters
+    const cleaned = text.replace(/\D/g, '');
+    
+    // Limit to 10 digits
+    const digits = cleaned.substring(0, 10);
+    
+    // Format the phone number
+    let formatted = '';
+    if (digits.length > 0) {
+      formatted += digits.substring(0, 3);
+      if (digits.length > 3) {
+        formatted += '-' + digits.substring(3, 6);
+        if (digits.length > 6) {
+          formatted += '-' + digits.substring(6, 10);
+        }
+      }
+    }
+    
+    setPhoneNumber(formatted);
+  };
+
   const handleComplete = async () => {
     if (loading) return;
     
@@ -48,6 +101,13 @@ export default function ProfileScreen() {
 
     if (!profilePicture) {
       Alert.alert('Error', 'Please add your face card');
+      return;
+    }
+
+    // Check phone number
+    const cleanedPhone = phoneNumber.replace(/\D/g, '');
+    if (cleanedPhone.length !== 10) {
+      Alert.alert('Error', 'Please enter a valid 10-digit phone number');
       return;
     }
 
@@ -82,73 +142,113 @@ export default function ProfileScreen() {
       await createUserProfile(
         user.id,
         name.trim(),
-        publicUrl
+        publicUrl,
+        cleanedPhone
       );
 
+      // Set profile complete flag
+      await setProfileComplete(true);
+      console.log('Profile completed successfully!');
+
+      // Navigate to main app
       router.replace('/(tabs)/map');
     } catch (error: any) {
+      console.error('Error creating profile:', error);
       Alert.alert('Error', error.message);
+    } finally {
       setLoading(false);
     }
   };
 
+  // If still checking for existing profile, show loading spinner
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#4B2E83" />
+        <Text style={styles.loadingText}>Loading profile information...</Text>
+      </View>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Complete Profile</Text>
-        <Text style={styles.subtitle}>
-          Add your name and face card
-        </Text>
-
-        <View style={styles.form}>
-          <TextInput
-            style={styles.input}
-            placeholder="Your First Name"
-            value={name}
-            onChangeText={setName}
-            maxLength={50}
-          />
-
-          <TouchableOpacity 
-            style={styles.imageButton}
-            onPress={pickImage}
-            disabled={loading}
-          >
-            {profilePicture ? (
-              <Image 
-                source={{ uri: profilePicture }} 
-                style={styles.profileImage}
-              />
-            ) : (
-              <View style={styles.imagePlaceholder}>
-                <Text style={styles.imagePlaceholderText}>
-                  Add your face card
-                </Text>
-              </View>
-            )}
-          </TouchableOpacity>
-        </View>
-
-        <TouchableOpacity 
-          style={[
-            styles.button, 
-            (loading || !name.trim() || !profilePicture) && styles.buttonDisabled
-          ]}
-          onPress={handleComplete}
-          disabled={loading || !name.trim() || !profilePicture}
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={styles.container}
+      >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
         >
-          {loading ? (
-            <View style={styles.loadingContainer}>
-              <ActivityIndicator color="#fff" />
-              <Text style={[styles.buttonText, styles.loadingText]}>
-                Creating Profile...
+          <View style={styles.content}>
+            <Text style={styles.title}>Complete Profile</Text>
+            <Text style={styles.subtitle}>
+              Add your name, face card, and phone number
+            </Text>
+
+            <View style={styles.form}>
+              <TextInput
+                style={styles.input}
+                placeholder="Your First Name"
+                value={name}
+                onChangeText={setName}
+                maxLength={50}
+              />
+
+              <TextInput
+                style={styles.input}
+                placeholder="Phone Number (XXX-XXX-XXXX)"
+                value={phoneNumber}
+                onChangeText={formatPhoneNumber}
+                keyboardType="phone-pad"
+                maxLength={12} // XXX-XXX-XXXX format has 12 characters
+              />
+              <Text style={styles.privacyText}>
+                Only shared to those you accept.
               </Text>
+
+              <TouchableOpacity 
+                style={styles.imageButton}
+                onPress={pickImage}
+                disabled={loading}
+              >
+                {profilePicture ? (
+                  <Image 
+                    source={{ uri: profilePicture }} 
+                    style={styles.profileImage}
+                  />
+                ) : (
+                  <View style={styles.imagePlaceholder}>
+                    <Text style={styles.imagePlaceholderText}>
+                      Add your face card
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
             </View>
-          ) : (
-            <Text style={styles.buttonText}>Complete Setup</Text>
-          )}
-        </TouchableOpacity>
-      </View>
+
+            <TouchableOpacity 
+              style={[
+                styles.button, 
+                (loading || !name.trim() || !profilePicture || phoneNumber.replace(/\D/g, '').length !== 10) && styles.buttonDisabled
+              ]}
+              onPress={handleComplete}
+              disabled={loading || !name.trim() || !profilePicture || phoneNumber.replace(/\D/g, '').length !== 10}
+            >
+              {loading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator color="#fff" />
+                  <Text style={[styles.buttonText, styles.loadingText]}>
+                    Creating Profile...
+                  </Text>
+                </View>
+              ) : (
+                <Text style={styles.buttonText}>Complete Setup</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -158,10 +258,14 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#fff',
   },
+  scrollContent: {
+    flexGrow: 1,
+    paddingBottom: 30,
+  },
   content: {
     flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 40,
+    paddingTop: 20,
   },
   title: {
     fontSize: 32,
@@ -172,11 +276,10 @@ const styles = StyleSheet.create({
   subtitle: {
     fontSize: 18,
     color: '#666',
-    marginBottom: 40,
+    marginBottom: 30,
   },
   form: {
-    gap: 30,
-    alignItems: 'center',
+    gap: 20,
     marginBottom: 30,
   },
   input: {
@@ -184,40 +287,32 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 12,
     fontSize: 16,
-    width: '100%',
-    color: '#333',
   },
   imageButton: {
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    overflow: 'hidden',
-    backgroundColor: '#f5f5f5',
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 3.84,
+    marginTop: 10,
+    alignSelf: 'center',
   },
   profileImage: {
-    width: '100%',
-    height: '100%',
+    width: 180,
+    height: 180,
+    borderRadius: 90,
   },
   imagePlaceholder: {
-    width: '100%',
-    height: '100%',
+    width: 180,
+    height: 180,
+    borderRadius: 90,
     backgroundColor: '#f5f5f5',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 15,
+    borderWidth: 2,
+    borderColor: '#e0e0e0',
+    borderStyle: 'dashed',
   },
   imagePlaceholderText: {
-    color: '#666',
     fontSize: 16,
+    color: '#666',
     textAlign: 'center',
+    padding: 10,
   },
   button: {
     backgroundColor: '#4B2E83',
@@ -226,7 +321,7 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   buttonDisabled: {
-    opacity: 0.5,
+    opacity: 0.7,
   },
   buttonText: {
     color: '#fff',
@@ -235,12 +330,20 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   loadingContainer: {
-    flexDirection: 'row',
+    flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: 8,
+    padding: 20,
   },
   loadingText: {
-    marginLeft: 8,
+    marginTop: 10,
+    fontSize: 16,
+    color: '#4B2E83',
+  },
+  privacyText: {
+    fontSize: 14,
+    color: '#999',
+    marginTop: -15,
+    marginLeft: 5,
   },
 }); 

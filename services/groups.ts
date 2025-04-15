@@ -54,6 +54,7 @@ export interface HostGroupInfo {
       id: string;
       display_name: string;
       profile_picture_url: string;
+      phone_num?: string;
     };
     members: Array<{
       id: string;
@@ -209,17 +210,25 @@ export async function createGroup(leaderId: string): Promise<Group | null> {
 // Function to lock group and prevent further joins
 export async function lockGroup(groupId: string): Promise<boolean> {
   try {
+    console.log('Locking group:', groupId);
+    
+    // Update group status to locked in a single DB call
     const { error } = await supabase
       .from('groups')
       .update({ 
         is_locked: true,
+        updated_at: new Date().toISOString()
       })
       .eq('id', groupId);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error locking group:', error);
+      return false;
+    }
+
     return true;
   } catch (error) {
-    console.error('Error locking group:', error);
+    console.error('Error in lockGroup:', error);
     return false;
   }
 }
@@ -253,6 +262,77 @@ async function checkAndUpdateGroupReadyState(groupId: string): Promise<boolean> 
         
       if (groupData?.is_live) {
         await deleteGroupVideos(groupId);
+      }
+      
+      // Check if group has an active dinner party and delete it if it exists
+      console.log(`Group ${groupId} has fallen below 3 members, checking for active dinner party`);
+      const { data: dinnerParty, error: dinnerPartyError } = await supabase
+        .from('dinner_parties')
+        .select('id')
+        .eq('group_id', groupId)
+        .single();
+      
+      if (dinnerPartyError && dinnerPartyError.code !== 'PGRST116') {
+        console.error(`Error checking for dinner party: ${dinnerPartyError.message}`);
+      }
+      
+      if (dinnerParty) {
+        console.log(`Found active dinner party for group ${groupId}, deleting it`);
+        await deleteDinnerParty(groupId);
+        
+        // Also clean up any party requests
+        const { error: requestsError } = await supabase
+          .from('party_requests')
+          .delete()
+          .or(`requesting_group_id.eq.${groupId},host_group_id.eq.${groupId}`);
+        
+        if (requestsError) {
+          console.error(`Error deleting party requests: ${requestsError.message}`);
+        } else {
+          console.log(`Successfully deleted party requests for group ${groupId}`);
+        }
+        
+        // Reset any group relationships
+        const { error: resetError } = await supabase
+          .from('groups')
+          .update({
+            accepted_attendee_group_id: null,
+            has_attendant: false
+          })
+          .eq('id', groupId);
+        
+        if (resetError) {
+          console.error(`Error resetting host group relationships: ${resetError.message}`);
+        }
+        
+        // If this group is attending another group's party, reset that relationship
+        const { data: groupInfo, error: groupInfoError } = await supabase
+          .from('groups')
+          .select('attending_host_group_id')
+          .eq('id', groupId)
+          .single();
+        
+        if (!groupInfoError && groupInfo && groupInfo.attending_host_group_id) {
+          const hostGroupId = groupInfo.attending_host_group_id;
+          
+          // Reset the host group's attendee reference
+          const { error: hostResetError } = await supabase
+            .from('groups')
+            .update({
+              accepted_attendee_group_id: null,
+              has_attendant: false
+            })
+            .eq('id', hostGroupId);
+          
+          if (hostResetError) {
+            console.error(`Error resetting host group: ${hostResetError.message}`);
+          } else {
+            console.log(`Reset host group ${hostGroupId} relationship`);
+          }
+          
+          // Reset this group's host reference
+          updates.attending_host_group_id = null;
+        }
       }
     }
 
@@ -628,23 +708,30 @@ export async function leaveGroup(userId: string, groupId: string): Promise<boole
 
 // Update group profile (videos)
 export async function updateGroupProfile(
-  groupId: string,
-  videoLinks: string[]
+  groupId: string, 
+  videoUrls: string[]
 ): Promise<boolean> {
   try {
+    console.log('Updating group profile:', groupId, videoUrls);
+    
+    // Update group status to live in a single DB call
     const { error } = await supabase
       .from('groups')
-      .update({
-        video_links: videoLinks,
+      .update({ 
         is_live: true,
+        video_links: videoUrls,
         updated_at: new Date().toISOString()
       })
       .eq('id', groupId);
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error updating group profile:', error);
+      return false;
+    }
+    
     return true;
   } catch (error) {
-    console.error('Error updating group profile:', error);
+    console.error('Error in updateGroupProfile:', error);
     return false;
   }
 }
@@ -795,16 +882,22 @@ export async function getActiveDinnerParties(): Promise<Array<{
 // Check if a group has an attendant
 export async function checkGroupHasAttendant(groupId: string): Promise<boolean> {
   try {
+    console.log(`[checkGroupHasAttendant] Checking if group has attendant: ${groupId}`);
     const { data: groupData, error } = await supabase
       .from('groups')
       .select('has_attendant')
       .eq('id', groupId)
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error(`[checkGroupHasAttendant] Error checking group attendant status: ${error.message}`, error);
+      throw error;
+    }
+    
+    console.log(`[checkGroupHasAttendant] Group ${groupId} has_attendant:`, groupData?.has_attendant);
     return groupData?.has_attendant || false;
   } catch (error) {
-    console.error('Error checking if group has attendant:', error);
+    console.error(`[checkGroupHasAttendant] Error checking if group has attendant:`, error);
     return false;
   }
 }
@@ -842,16 +935,23 @@ export async function createPartyRequest(requestingGroupId: string, hostGroupId:
       throw new Error('This group already has an attendant');
     }
 
-    // Check if requesting group is already attending another party
+    // Check if requesting group is properly configured (is_locked=true)
     const { data: requestingGroup, error: groupError } = await supabase
       .from('groups')
-      .select('attending_host_group_id')
+      .select('attending_host_group_id, is_locked')
       .eq('id', requestingGroupId)
       .single();
       
     if (groupError) throw groupError;
+    
+    // Check if group is already attending another party
     if (requestingGroup?.attending_host_group_id) {
       throw new Error('Your group is already attending another dinner party');
+    }
+    
+    // Check if group is properly locked (has at least 3 members and is ready)
+    if (!requestingGroup?.is_locked) {
+      throw new Error('Your group needs to be finalized before you can join dinner parties');
     }
 
     // Check if a request already exists
@@ -911,34 +1011,56 @@ function isValidUUID(id: string): boolean {
  */
 export async function acceptPartyRequest(requestId: string): Promise<boolean> {
   try {
+    console.log(`[acceptPartyRequest] Starting process for request ID: ${requestId}`);
     if (!isValidUUID(requestId)) {
+      console.error(`[acceptPartyRequest] Invalid request ID format: ${requestId}`);
       throw new Error('Invalid request ID format');
     }
 
     // Get the request details
+    console.log(`[acceptPartyRequest] Fetching request details for ID: ${requestId}`);
     const { data: request, error } = await supabase
       .from('party_requests')
       .select('*')
       .eq('id', requestId)
       .single();
     
-    if (error) throw error;
-    if (!request) throw new Error('Request not found');
+    if (error) {
+      console.error(`[acceptPartyRequest] Error fetching request: ${error.message}`, error);
+      throw error;
+    }
+    
+    if (!request) {
+      console.error(`[acceptPartyRequest] Request not found for ID: ${requestId}`);
+      throw new Error('Request not found');
+    }
+    
+    console.log(`[acceptPartyRequest] Request details retrieved:`, {
+      requestingGroupId: request.requesting_group_id,
+      hostGroupId: request.host_group_id
+    });
     
     // Validate UUIDs in the request
     if (!isValidUUID(request.host_group_id) || !isValidUUID(request.requesting_group_id)) {
+      console.error(`[acceptPartyRequest] Invalid group ID format in request:`, {
+        hostGroupId: request.host_group_id,
+        requestingGroupId: request.requesting_group_id
+      });
       throw new Error('Invalid group ID format in request');
     }
 
     // First check if the host group has an attendant already
+    console.log(`[acceptPartyRequest] Checking if host group already has an attendant: ${request.host_group_id}`);
     const hasAttendant = await checkGroupHasAttendant(request.host_group_id);
     
     if (hasAttendant) {
+      console.error(`[acceptPartyRequest] Host group ${request.host_group_id} already has an attendant`);
       throw new Error('This group already has an attendant');
     }
 
     try {
       // Start by updating host group
+      console.log(`[acceptPartyRequest] Updating host group: ${request.host_group_id}`);
       const { error: updateError } = await supabase
         .from('groups')
         .update({
@@ -947,9 +1069,14 @@ export async function acceptPartyRequest(requestId: string): Promise<boolean> {
         })
         .eq('id', request.host_group_id);
 
-      if (updateError) throw updateError;
+      if (updateError) {
+        console.error(`[acceptPartyRequest] Error updating host group: ${updateError.message}`, updateError);
+        throw updateError;
+      }
+      console.log(`[acceptPartyRequest] Host group updated successfully`);
 
       // Update the requesting group
+      console.log(`[acceptPartyRequest] Updating requesting group: ${request.requesting_group_id}`);
       const { error: requestingGroupError } = await supabase
         .from('groups')
         .update({
@@ -958,8 +1085,10 @@ export async function acceptPartyRequest(requestId: string): Promise<boolean> {
         .eq('id', request.requesting_group_id);
 
       if (requestingGroupError) {
+        console.error(`[acceptPartyRequest] Error updating requesting group: ${requestingGroupError.message}`, requestingGroupError);
+        console.log(`[acceptPartyRequest] Rolling back host group update due to requesting group update failure`);
         // Rollback the host group update if requesting group update fails
-        await supabase
+        const { error: rollbackError } = await supabase
           .from('groups')
           .update({
             has_attendant: false,
@@ -967,25 +1096,43 @@ export async function acceptPartyRequest(requestId: string): Promise<boolean> {
           })
           .eq('id', request.host_group_id);
         
+        if (rollbackError) {
+          console.error(`[acceptPartyRequest] Error during host group rollback: ${rollbackError.message}`, rollbackError);
+        } else {
+          console.log(`[acceptPartyRequest] Host group rollback successful`);
+        }
+        
         throw requestingGroupError;
       }
+      console.log(`[acceptPartyRequest] Requesting group updated successfully`);
 
       // Delete all other requests for this host group
+      console.log(`[acceptPartyRequest] Deleting all other requests for host group: ${request.host_group_id}`);
       const { error: deleteError } = await supabase
         .from('party_requests')
         .delete()
         .eq('host_group_id', request.host_group_id);
 
       if (deleteError) {
-        // Rollback both previous updates if delete fails
-        await supabase
+        console.error(`[acceptPartyRequest] Error deleting host group requests: ${deleteError.message}`, deleteError);
+        console.log(`[acceptPartyRequest] Rolling back both previous updates due to request deletion failure`);
+        
+        // Rollback requesting group update
+        const { error: reqGroupRollbackError } = await supabase
           .from('groups')
           .update({
             attending_host_group_id: null
           })
           .eq('id', request.requesting_group_id);
           
-        await supabase
+        if (reqGroupRollbackError) {
+          console.error(`[acceptPartyRequest] Error during requesting group rollback: ${reqGroupRollbackError.message}`, reqGroupRollbackError);
+        } else {
+          console.log(`[acceptPartyRequest] Requesting group rollback successful`);
+        }
+        
+        // Rollback host group update  
+        const { error: hostRollbackError } = await supabase
           .from('groups')
           .update({
             has_attendant: false,
@@ -993,28 +1140,66 @@ export async function acceptPartyRequest(requestId: string): Promise<boolean> {
           })
           .eq('id', request.host_group_id);
           
+        if (hostRollbackError) {
+          console.error(`[acceptPartyRequest] Error during host group rollback: ${hostRollbackError.message}`, hostRollbackError);
+        } else {
+          console.log(`[acceptPartyRequest] Host group rollback successful`);
+        }
+          
         throw deleteError;
       }
+      console.log(`[acceptPartyRequest] All host group requests deleted successfully`);
 
       // Also delete all outgoing requests from the accepted group
+      console.log(`[acceptPartyRequest] Deleting outgoing requests from requesting group: ${request.requesting_group_id}`);
       const { error: outgoingDeleteError } = await supabase
         .from('party_requests')
         .delete()
         .eq('requesting_group_id', request.requesting_group_id);
 
       if (outgoingDeleteError) {
-        console.error('Error deleting outgoing requests:', outgoingDeleteError);
+        console.error(`[acceptPartyRequest] Error deleting outgoing requests: ${outgoingDeleteError.message}`, outgoingDeleteError);
+        console.log(`[acceptPartyRequest] Not rolling back as this is a cleanup operation`);
         // We don't need to roll back here as this is a cleanup operation
         // The main acceptance is already complete
+      } else {
+        console.log(`[acceptPartyRequest] Outgoing requests deleted successfully`);
       }
 
+      // Verify the relationship was established correctly
+      console.log(`[acceptPartyRequest] Verifying database updates`);
+      const { data: verifyHost, error: verifyHostError } = await supabase
+        .from('groups')
+        .select('has_attendant, accepted_attendee_group_id')
+        .eq('id', request.host_group_id)
+        .single();
+        
+      if (verifyHostError) {
+        console.error(`[acceptPartyRequest] Error verifying host group update: ${verifyHostError.message}`);
+      } else {
+        console.log(`[acceptPartyRequest] Host group verification result:`, verifyHost);
+      }
+      
+      const { data: verifyRequesting, error: verifyReqError } = await supabase
+        .from('groups')
+        .select('attending_host_group_id')
+        .eq('id', request.requesting_group_id)
+        .single();
+        
+      if (verifyReqError) {
+        console.error(`[acceptPartyRequest] Error verifying requesting group update: ${verifyReqError.message}`);
+      } else {
+        console.log(`[acceptPartyRequest] Requesting group verification result:`, verifyRequesting);
+      }
+
+      console.log(`[acceptPartyRequest] Party request acceptance completed successfully!`);
       return true;
     } catch (innerError) {
-      console.error('Error in transaction:', innerError);
+      console.error(`[acceptPartyRequest] Error in transaction:`, innerError);
       throw innerError;
     }
   } catch (error) {
-    console.error('Error accepting party request:', error);
+    console.error(`[acceptPartyRequest] Error accepting party request:`, error);
     return false;
   }
 }
@@ -1172,6 +1357,12 @@ export async function cancelAttendance(
  */
 export async function isDinnerPartyActive(groupId: string): Promise<boolean> {
   try {
+    // Since dinner_time column doesn't exist, we'll consider all dinner parties as active
+    // This is a temporary fix until the proper time tracking is implemented
+    return true;
+    
+    // Original implementation commented out due to missing column:
+    /* 
     const { data: groupData, error: groupError } = await supabase
       .from('groups')
       .select('dinner_time')
@@ -1194,6 +1385,7 @@ export async function isDinnerPartyActive(groupId: string): Promise<boolean> {
     // (allowing for parties that are currently happening)
     const sixHoursInMs = 6 * 60 * 60 * 1000;
     return dinnerTime.getTime() > (now.getTime() - sixHoursInMs);
+    */
   } catch (error) {
     console.error('Error in isDinnerPartyActive:', error);
     return false;
@@ -1218,13 +1410,16 @@ export async function getHostGroupInfo(userGroupId: string): Promise<HostGroupIn
     
     const hostGroupId = userGroup.attending_host_group_id;
     
-    // Check if the dinner party is still active
+    // For now, we assume the party is active since we can't check dinner_time
+    // We'll skip the active check until proper time tracking is implemented
+    /* Original check:
     const isActive = await isDinnerPartyActive(hostGroupId);
     if (!isActive) {
       // Dinner party has passed, automatically cancel the attendance
       await cancelAttendance(userGroupId, 'attendee');
       return null;
     }
+    */
     
     // Get the host group details
     const { data: hostGroup, error: hostError } = await supabase
@@ -1235,7 +1430,7 @@ export async function getHostGroupInfo(userGroupId: string): Promise<HostGroupIn
           id, 
           display_name, 
           profile_picture_url,
-          phone_number
+          phone_num
         ),
         members:group_members (
           user:user_id (
@@ -1275,26 +1470,40 @@ export async function getHostGroupInfo(userGroupId: string): Promise<HostGroupIn
  */
 export async function getAttendeeGroupInfo(hostGroupId: string): Promise<AttendeeGroupInfo | null> {
   try {
+    console.log(`[getAttendeeGroupInfo] Getting attendee info for host group: ${hostGroupId}`);
     // First get the host group to find the attendee group ID
     const { data: hostGroup, error: hostGroupError } = await supabase
       .from('groups')
-      .select('accepted_attendee_group_id, dinner_time')
+      .select('accepted_attendee_group_id')
       .eq('id', hostGroupId)
       .single();
     
-    if (hostGroupError || !hostGroup || !hostGroup.accepted_attendee_group_id) {
+    if (hostGroupError) {
+      console.error(`[getAttendeeGroupInfo] Error fetching host group: ${hostGroupError.message}`, hostGroupError);
       return null;
     }
     
-    // Check if the dinner party is still active
+    if (!hostGroup || !hostGroup.accepted_attendee_group_id) {
+      console.log(`[getAttendeeGroupInfo] No accepted attendee found for host group: ${hostGroupId}`);
+      return null;
+    }
+    
+    const attendeeGroupId = hostGroup.accepted_attendee_group_id;
+    console.log(`[getAttendeeGroupInfo] Found attendee group ID: ${attendeeGroupId}`);
+    
+    // For now, we assume the party is active since we can't check dinner_time
+    // We'll skip the active check until proper time tracking is implemented
+    /* Original check:
     const isActive = await isDinnerPartyActive(hostGroupId);
     if (!isActive) {
       // Dinner party has passed, automatically clean up the relationship
       await cancelAttendance(hostGroupId, 'host');
       return null;
     }
+    */
     
     // Get the attendee group details
+    console.log(`[getAttendeeGroupInfo] Fetching detailed info for attendee group: ${attendeeGroupId}`);
     const { data: attendeeGroup, error: attendeeError } = await supabase
       .from('groups')
       .select(`
@@ -1302,7 +1511,8 @@ export async function getAttendeeGroupInfo(hostGroupId: string): Promise<Attende
         leader:leader_id (
           id, 
           display_name, 
-          profile_picture_url
+          profile_picture_url,
+          phone_num
         ),
         members:group_members (
           user:user_id (
@@ -1315,14 +1525,27 @@ export async function getAttendeeGroupInfo(hostGroupId: string): Promise<Attende
       .eq('id', hostGroup.accepted_attendee_group_id)
       .single();
       
-    if (attendeeError) throw attendeeError;
-    if (!attendeeGroup) return null;
+    if (attendeeError) {
+      console.error(`[getAttendeeGroupInfo] Error fetching attendee group details: ${attendeeError.message}`, attendeeError);
+      throw attendeeError;
+    }
+    
+    if (!attendeeGroup) {
+      console.log(`[getAttendeeGroupInfo] No attendee group found for ID: ${attendeeGroupId}`);
+      return null;
+    }
+    
+    console.log(`[getAttendeeGroupInfo] Successfully retrieved attendee group info:`, {
+      attendeeGroupId: attendeeGroup.id,
+      leaderName: attendeeGroup.leader?.display_name,
+      memberCount: attendeeGroup.members?.length || 0
+    });
     
     return {
       attendeeGroup
     };
   } catch (error) {
-    console.error('Error getting attendee group info:', error);
+    console.error(`[getAttendeeGroupInfo] Error getting attendee group info:`, error);
     return null;
   }
 }

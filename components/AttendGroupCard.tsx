@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { StyleSheet, View, Text, Image, Dimensions, TouchableOpacity, Linking } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -7,17 +7,29 @@ import Animated, {
   useSharedValue,
   interpolate,
   useAnimatedScrollHandler,
+  runOnJS,
+  withTiming,
+  withSpring
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ExpandableVideo } from './ExpandableVideo';
+import { VideoVisibilityTracker } from './VideoVisibilityTracker';
+import { useAudio } from '../contexts/AudioContext';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width, height } = Dimensions.get('window');
 const CARD_WIDTH = width - 40;
 const TAB_BAR_HEIGHT = 49;
-const VIDEO_HEIGHT = width * 1.0;
+const VIDEO_HEIGHT = width * 0.8;
 const MIN_HEADER_HEIGHT = 120;
 const MAX_HEADER_HEIGHT = 180;
 const MIN_FONT_SIZE = 24;
 const MAX_FONT_SIZE = 32;
+
+// Calculate responsive profile picture size based on card width
+// Leave margins between pictures and account for 3 pictures in a row
+const PROFILE_PIC_SIZE = Math.min(120, (CARD_WIDTH - 60) / 3);
+const PROFILE_PIC_MARGIN = 5;
 
 // Pre-define profile pictures
 const PROFILE_PICS = {
@@ -43,40 +55,83 @@ interface AttendGroupCardProps {
     hostName: string;     // From hosting group's leader.display_name
     phoneNumber: string;  // From hosting group's leader.phone_number
     members: GroupMember[]; // Array of members from the hosting group's members table
-    date: string;
-    time: string;
     menu: {
       entree: string;    // From dinner_parties.main_dish
       sides: string[];   // From dinner_parties.side (will need to be split if multiple)
     };
+    videoLinks?: string[]; // Array of video URLs
   };
   brightness: number;
   onCancelAttendance: () => void;
+  screenContext?: 'host' | 'attend'; // New prop to indicate which screen is using the card
 }
 
 export function AttendGroupCard({ 
   group,
   brightness,
-  onCancelAttendance
+  onCancelAttendance,
+  screenContext = 'attend' // Default to attend screen context
 }: AttendGroupCardProps) {
   const [isScrolling, setIsScrolling] = useState(false);
+  const [activeAudioIndex, setActiveAudioIndex] = useState(0);
+  const [visibilityMap, setVisibilityMap] = useState<Record<number, number>>({});
+  const [scrollViewHeight, setScrollViewHeight] = useState(0);
+  const [currentScrollY, setCurrentScrollY] = useState(0);
   const scrollY = useSharedValue(0);
   const headerHeight = useSharedValue(MIN_HEADER_HEIGHT);
   const insets = useSafeAreaInsets();
   
   const CARD_HEIGHT = height * 0.8 - (TAB_BAR_HEIGHT + insets.bottom);
 
+  // Handle visibility changes for videos
+  const handleVisibilityChange = useCallback((index: number, visibilityPercentage: number) => {
+    setVisibilityMap(prev => {
+      // Only update if there's a significant change
+      if (Math.abs((prev[index] || 0) - visibilityPercentage) > 5) {
+        return {
+          ...prev,
+          [index]: visibilityPercentage
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  // Track which video has the highest visibility
+  useEffect(() => {
+    if (Object.keys(visibilityMap).length === 0) return;
+
+    // Find the video with the highest visibility
+    let maxVisibility = 0;
+    let maxVisibilityIndex = 0;
+
+    Object.entries(visibilityMap).forEach(([indexStr, visibility]) => {
+      const index = parseInt(indexStr, 10);
+      if (visibility > maxVisibility) {
+        maxVisibility = visibility;
+        maxVisibilityIndex = index;
+      }
+    });
+
+    // Only switch active audio if visibility is significant
+    if (maxVisibility > 25) {
+      setActiveAudioIndex(maxVisibilityIndex);
+    }
+  }, [visibilityMap]);
+
   const handlePhonePress = () => {
-    Linking.openURL(`tel:${group.phoneNumber}`);
+    Linking.openURL(`sms:${group.phoneNumber}`);
   };
 
   const formatPhoneNumber = (phone: string) => {
     return `(${phone.slice(0,3)})-${phone.slice(3,6)}-${phone.slice(6)}`;
   };
 
+  // Updated scroll handler with runOnJS to ensure state updates happen on JS thread
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
+      runOnJS(setCurrentScrollY)(event.contentOffset.y);
     },
   });
 
@@ -110,7 +165,7 @@ export function AttendGroupCard({
     const fontSize = interpolate(
       scrollY.value,
       [-100, 0],
-      [22, 18],
+      [20, 16],
       'clamp'
     );
 
@@ -118,6 +173,23 @@ export function AttendGroupCard({
       fontSize,
     };
   });
+
+  // Function to get the appropriate header text based on the screen context
+  const getHeaderText = () => {
+    return screenContext === 'host' ? 'You have guests!' : 'You\'re accepted!';
+  };
+
+  // Function to get the appropriate subheader text based on the screen context
+  const getSubHeaderText = () => {
+    return screenContext === 'host' 
+      ? `Let's get this gc going, message ${group.hostName} at:`
+      : `Let's get this gc going, message ${group.hostName} at:`;
+  };
+
+  // Function to check if we should show the phone number section
+  const shouldShowPhoneNumber = () => {
+    return group.phoneNumber && group.phoneNumber !== '0000000000';
+  };
 
   return (
     <View style={[styles.mainCardContainer, { height: CARD_HEIGHT }]}>
@@ -131,76 +203,129 @@ export function AttendGroupCard({
           onScrollEndDrag={() => setIsScrolling(false)}
           onMomentumScrollEnd={() => setIsScrolling(false)}
           contentContainerStyle={styles.scrollContent}
+          onLayout={(event) => {
+            const { height } = event.nativeEvent.layout;
+            setScrollViewHeight(height);
+          }}
         >
           <Animated.View style={[styles.cardHeader, headerStyle]}>
             <Animated.Text 
               style={[styles.headerText, headerTextStyle]}
               allowFontScaling={false}
             >
-              You're going!
+              {getHeaderText()}
             </Animated.Text>
             <Animated.Text style={[styles.subHeaderText, subHeaderTextStyle]}>
-              {/* Will display hosting group's leader name from group.leader.display_name */}
-              Message {group.hostName} at
+              {getSubHeaderText()}
             </Animated.Text>
-            <TouchableOpacity 
-              style={styles.phoneNumberContainer}
-              onPress={handlePhonePress}
-            >
-              {/* Will display hosting group's leader phone from group.leader.phone_number */}
-              <Text style={styles.phoneNumberText}>
-                {formatPhoneNumber(group.phoneNumber)}
-              </Text>
-            </TouchableOpacity>
+
+            {/* Phone number section conditionally shown */}
+            {shouldShowPhoneNumber() && (
+              <TouchableOpacity 
+                style={styles.phoneNumberContainer}
+                onPress={handlePhonePress}
+              >
+                <View style={styles.phoneButtonContent}>
+                  <Ionicons name="chatbubble-outline" size={18} color="#fff" style={styles.messageIcon} />
+                  <Text style={styles.phoneNumberText}>
+                    {formatPhoneNumber(group.phoneNumber)}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            )}
           </Animated.View>
 
           <View style={styles.videosContainer}>
-            {/* Videos will be loaded from group_videos table, linked to the hosting group */}
-            {/* Each video will be stored in Supabase storage and referenced by URL */}
-            {/* Example structure in database:
-                group_videos {
-                  id: uuid
-                  group_id: uuid (references groups.id)
-                  video_url: string (Supabase storage URL)
-                  created_at: timestamp
-                }
-            */}
+            {group.videoLinks && group.videoLinks.length > 0 ? (
+              group.videoLinks.map((videoUrl, index) => (
+                <VideoVisibilityTracker
+                  key={index}
+                  videoUrl={videoUrl}
+                  index={index}
+                  scrollY={currentScrollY}
+                  scrollViewHeight={scrollViewHeight}
+                  onVisibilityChange={handleVisibilityChange}
+                  isAudioEnabled={index === activeAudioIndex}
+                  brightness={brightness}
+                  shouldPlay={true}
+                  isLooping={true}
+                  videoHeight={VIDEO_HEIGHT}
+                  unmutedInExpanded={true}
+                  tabName="social"
+                />
+              ))
+            ) : (
+              <View style={styles.noVideoContainer}>
+                <Text style={styles.noVideoText}>No videos available</Text>
+              </View>
+            )}
           </View>
-
-          <Text style={styles.dateTime}>
-            {group.time} {group.date}
-          </Text>
 
           <View style={styles.menuContainer}>
             <Text style={styles.menuTitle}>Menu</Text>
-            {/* Menu items from dinner_parties table */}
-            <Text style={styles.menuItem}>Entrée: {group.menu.entree}</Text>
-            <Text style={styles.menuItem}>Sides: {group.menu.sides.join(', ')}</Text>
+            {/* Only show menu items that aren't TBD */}
+            {group.menu.entree !== 'TBD' && (
+              <Text style={styles.menuItem}>Entrée: {group.menu.entree}</Text>
+            )}
+            {group.menu.sides[0] !== 'TBD' && (
+              <Text style={styles.menuItem}>Sides: {group.menu.sides.join(', ')}</Text>
+            )}
+            {group.menu.entree === 'TBD' && group.menu.sides[0] === 'TBD' && (
+              <Text style={styles.menuItem}>Menu details will appear here</Text>
+            )}
           </View>
 
-          <View style={styles.membersContainer}>
-            {/* Members will be loaded from group_members table of the hosting group */}
-            {/* Profile pictures will be loaded from user.profile_picture_url */}
-            {/* Example structure:
-                group_members {
-                  id: uuid
-                  group_id: uuid (references groups.id)
-                  user_id: uuid (references auth.users.id)
-                  joined_at: timestamp
-                }
-            */}
-            {group.members.map((member, index) => (
-              <View key={index} style={styles.memberItem}>
-                <Image
-                  source={{ uri: member.profilePic }}
-                  style={styles.profilePic}
-                  fadeDuration={0}
-                />
-                <Text style={styles.memberName}>{member.name}</Text>
+          {/* Member profiles section with adaptive layout based on count */}
+          {group.members && group.members.length > 0 ? (
+            <View style={styles.membersSection}>
+              <View style={styles.membersContainer}>
+                {/* For any group size, show first 3 members (or fewer) in top row */}
+                {group.members.slice(0, Math.min(3, group.members.length)).map((member, index) => (
+                  <View key={`top-${index}`} style={styles.memberItem}>
+                    <Image
+                      source={{ uri: member.profilePic }}
+                      style={styles.profilePic}
+                      fadeDuration={0}
+                    />
+                    <Text style={styles.memberName} numberOfLines={1} ellipsizeMode="tail">
+                      {member.name}
+                    </Text>
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
+              
+              {/* Second row for when there are 4 or 5 members */}
+              {group.members.length > 3 && (
+                <View style={[
+                  styles.membersContainer, 
+                  styles.secondRowContainer,
+                  group.members.length === 4 && styles.singleItemSecondRow
+                ]}>
+                  {group.members.slice(3).map((member, index) => (
+                    <View 
+                      key={`bottom-${index}`} 
+                      style={[
+                        styles.memberItem,
+                        // Adjust width for second row based on number of members
+                        group.members.length === 4 ? { width: CARD_WIDTH - 80 } : { width: (CARD_WIDTH - 40) / 2 }
+                      ]}
+                    >
+                      <Image
+                        source={{ uri: member.profilePic }}
+                        style={styles.profilePic}
+                        fadeDuration={0}
+                      />
+                      <Text style={styles.memberName} numberOfLines={1} ellipsizeMode="tail">
+                        {member.name}
+                      </Text>
+                    </View>
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : null}
 
+          {/* Cancel button placed right after members */}
           <View style={styles.cancelButtonContainer}>
             <TouchableOpacity 
               style={styles.cancelButton}
@@ -239,6 +364,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     flexGrow: 1,
+    paddingBottom: 0,
   },
   cardHeader: {
     justifyContent: 'center',
@@ -254,18 +380,27 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   subHeaderText: {
-    fontSize: 18,
+    fontSize: 16,
     color: '#666',
     textAlign: 'center',
     paddingHorizontal: 20,
     marginBottom: 8,
+    flexWrap: 'wrap',
   },
   phoneNumberContainer: {
     backgroundColor: '#4B2E83',
-    paddingHorizontal: 15,
+    paddingHorizontal: 18,
     paddingVertical: 8,
     borderRadius: 8,
     marginTop: 2,
+  },
+  phoneButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageIcon: {
+    marginRight: 6,
   },
   phoneNumberText: {
     color: '#fff',
@@ -294,12 +429,6 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#000',
   },
-  dateTime: {
-    fontSize: 17,
-    textAlign: 'center',
-    color: '#666',
-    marginVertical: 15,
-  },
   menuContainer: {
     padding: 15,
     alignItems: 'center',
@@ -316,30 +445,37 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     textAlign: 'center',
   },
+  membersSection: {
+    marginTop: 10,
+    marginBottom: 5,
+  },
   membersContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    padding: 15,
-    marginTop: 10,
+    paddingHorizontal: 20,
   },
   memberItem: {
     alignItems: 'center',
+    width: (CARD_WIDTH - 40) / 3,
+    paddingHorizontal: PROFILE_PIC_MARGIN,
   },
   profilePic: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: PROFILE_PIC_SIZE,
+    height: PROFILE_PIC_SIZE,
+    borderRadius: PROFILE_PIC_SIZE / 2,
     marginBottom: 10,
   },
   memberName: {
-    fontSize: 17,
+    fontSize: 16,
     color: '#4B2E83',
     fontWeight: '500',
+    textAlign: 'center',
   },
   cancelButtonContainer: {
     padding: 15,
-    paddingBottom: 30,
-    marginTop: 20,
+    paddingBottom: 15,
+    marginTop: 10,
+    marginBottom: 0,
   },
   cancelButton: {
     backgroundColor: '#DC3545',
@@ -351,5 +487,23 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  secondRowContainer: {
+    marginTop: 20,
+  },
+  singleItemSecondRow: {
+    justifyContent: 'center',
+  },
+  noVideoContainer: {
+    height: VIDEO_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    marginVertical: 10,
+  },
+  noVideoText: {
+    fontSize: 16,
+    color: '#666',
   },
 }); 

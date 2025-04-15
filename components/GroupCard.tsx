@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { StyleSheet, View, Text, Image, Dimensions, ScrollView, Animated as RNAnimated, Alert } from 'react-native';
 import { Video, ResizeMode } from 'expo-av';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -14,17 +14,24 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { SwipeGlow } from './SwipeGlow';
+import { ExpandableVideo } from './ExpandableVideo';
+import { VideoVisibilityTracker } from './VideoVisibilityTracker';
 
 const { width, height } = Dimensions.get('window');
 const CARD_WIDTH = width - 40;
 const TAB_BAR_HEIGHT = 49;
-const VIDEO_HEIGHT = width * 1.0;
+const VIDEO_HEIGHT = width * 0.8;
 const SWIPE_DURATION = 400;
 const FADE_DURATION = 300;
 const SPRING_CONFIG = {
   stiffness: 100,
   damping: 20,
 };
+
+// Calculate responsive profile picture size based on card width
+// Leave margins between pictures and account for 3 pictures in a row
+const PROFILE_PIC_SIZE = Math.min(120, (CARD_WIDTH - 60) / 3);
+const PROFILE_PIC_MARGIN = 5;
 
 // Pre-define profile pictures
 const PROFILE_PICS = {
@@ -73,6 +80,10 @@ export function GroupCard({
   translateX 
 }: GroupCardProps) {
   const [isScrolling, setIsScrolling] = useState(false);
+  const [activeAudioIndex, setActiveAudioIndex] = useState(0);
+  const [visibilityMap, setVisibilityMap] = useState<Record<number, number>>({});
+  const [scrollViewHeight, setScrollViewHeight] = useState(0);
+  const [currentScrollY, setCurrentScrollY] = useState(0);
   const scrollY = useSharedValue(0);
   const translateY = useSharedValue(0);
   const scale = useSharedValue(isActive ? 1 : 0.9);
@@ -178,8 +189,45 @@ export function GroupCard({
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
       scrollY.value = event.contentOffset.y;
+      runOnJS(setCurrentScrollY)(event.contentOffset.y);
     },
   });
+
+  // Handle visibility changes for videos
+  const handleVisibilityChange = useCallback((index: number, visibilityPercentage: number) => {
+    setVisibilityMap(prev => {
+      // Only update if there's a significant change
+      if (Math.abs((prev[index] || 0) - visibilityPercentage) > 5) {
+        return {
+          ...prev,
+          [index]: visibilityPercentage
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  // Track which video has the highest visibility
+  useEffect(() => {
+    if (Object.keys(visibilityMap).length === 0) return;
+
+    // Find the video with the highest visibility
+    let maxVisibility = 0;
+    let maxVisibilityIndex = 0;
+
+    Object.entries(visibilityMap).forEach(([indexStr, visibility]) => {
+      const index = parseInt(indexStr, 10);
+      if (visibility > maxVisibility) {
+        maxVisibility = visibility;
+        maxVisibilityIndex = index;
+      }
+    });
+
+    // Only switch active audio if visibility is significant
+    if (maxVisibility > 25) {
+      setActiveAudioIndex(maxVisibilityIndex);
+    }
+  }, [visibilityMap]);
 
   const headerStyle = useAnimatedStyle(() => {
     const height = interpolate(
@@ -230,6 +278,10 @@ export function GroupCard({
             onScrollBeginDrag={() => setIsScrolling(true)}
             onScrollEndDrag={() => setIsScrolling(false)}
             onMomentumScrollEnd={() => setIsScrolling(false)}
+            onLayout={(event) => {
+              const { height } = event.nativeEvent.layout;
+              setScrollViewHeight(height);
+            }}
           >
             <Animated.View style={[styles.cardHeader, headerStyle]}>
               <Animated.Text 
@@ -241,35 +293,80 @@ export function GroupCard({
             </Animated.View>
 
             <View style={styles.videosContainer}>
-              {group.videoLinks.map((videoUrl, index) => (
-                <View key={index} style={styles.videoWrapper}>
-                  <View style={[styles.videoContainer, { opacity: brightness }]}>
-                    <Video
-                      source={{ uri: videoUrl }}
-                      style={styles.video}
-                      shouldPlay={isActive}
-                      isLooping={true}
-                      isMuted={true}
-                      useNativeControls={false}
-                      resizeMode={ResizeMode.COVER}
-                    />
-                  </View>
+              {group.videoLinks && group.videoLinks.length > 0 ? (
+                group.videoLinks.map((videoUrl, index) => (
+                  <VideoVisibilityTracker
+                    key={index}
+                    videoUrl={videoUrl}
+                    index={index}
+                    scrollY={currentScrollY}
+                    scrollViewHeight={scrollViewHeight}
+                    onVisibilityChange={handleVisibilityChange}
+                    isAudioEnabled={index === activeAudioIndex && isActive}
+                    brightness={brightness}
+                    shouldPlay={isActive}
+                    isLooping={true}
+                    videoHeight={VIDEO_HEIGHT}
+                    unmutedInExpanded={true}
+                    tabName="social"
+                  />
+                ))
+              ) : (
+                <View style={styles.noVideoContainer}>
+                  <Text style={styles.noVideoText}>No videos available</Text>
                 </View>
-              ))}
+              )}
             </View>
 
-            <View style={styles.membersContainer}>
-              {group.members.map((member, index) => (
-                <View key={index} style={styles.memberItem}>
-                  <Image
-                    source={{ uri: member.profilePic }}
-                    style={styles.profilePic}
-                    fadeDuration={0}
-                  />
-                  <Text style={styles.memberName}>{member.name}</Text>
+            {/* Member profiles section with adaptive layout based on count */}
+            {group.members.length > 0 && (
+              <View style={styles.membersSection}>
+                <View style={styles.membersContainer}>
+                  {/* For any group size, show first 3 members (or fewer) in top row */}
+                  {group.members.slice(0, Math.min(3, group.members.length)).map((member, index) => (
+                    <View key={`top-${index}`} style={styles.memberItem}>
+                      <Image
+                        source={{ uri: member.profilePic }}
+                        style={styles.profilePic}
+                        fadeDuration={0}
+                      />
+                      <Text style={styles.memberName} numberOfLines={1} ellipsizeMode="tail">
+                        {member.name}
+                      </Text>
+                    </View>
+                  ))}
                 </View>
-              ))}
-            </View>
+                
+                {/* Second row for when there are 4 or 5 members */}
+                {group.members.length > 3 && (
+                  <View style={[
+                    styles.membersContainer, 
+                    styles.secondRowContainer,
+                    group.members.length === 4 && styles.singleItemSecondRow
+                  ]}>
+                    {group.members.slice(3).map((member, index) => (
+                      <View 
+                        key={`bottom-${index}`} 
+                        style={[
+                          styles.memberItem,
+                          // Adjust width for second row based on number of members
+                          group.members.length === 4 ? { width: CARD_WIDTH - 80 } : { width: (CARD_WIDTH - 40) / 2 }
+                        ]}
+                      >
+                        <Image
+                          source={{ uri: member.profilePic }}
+                          style={styles.profilePic}
+                          fadeDuration={0}
+                        />
+                        <Text style={styles.memberName} numberOfLines={1} ellipsizeMode="tail">
+                          {member.name}
+                        </Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
           </Animated.ScrollView>
           <SwipeGlow translateX={translateX} glowOpacity={glowOpacity} />
         </View>
@@ -305,7 +402,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#fff',
     paddingTop: 20,
-    paddingBottom: 20,
+    paddingBottom: 10,
   },
   cardTitle: {
     fontSize: MIN_FONT_SIZE,
@@ -318,44 +415,51 @@ const styles = StyleSheet.create({
   },
   videosContainer: {
     padding: 15,
+    paddingTop: 5,
     gap: 15,
   },
-  videoWrapper: {
-    width: '100%',
-    height: VIDEO_HEIGHT,
-    borderRadius: 12,
-    backgroundColor: '#f5f5f5',
-    overflow: 'hidden',
-    marginBottom: 15,
-  },
-  videoContainer: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  video: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#000',
+  membersSection: {
+    marginTop: 10,
+    marginBottom: 30,
   },
   membersContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    padding: 15,
-    marginTop: 10,
-    paddingBottom: 30,
+    paddingHorizontal: 20,
   },
   memberItem: {
     alignItems: 'center',
+    width: (CARD_WIDTH - 40) / 3,
+    paddingHorizontal: PROFILE_PIC_MARGIN,
   },
   profilePic: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+    width: PROFILE_PIC_SIZE,
+    height: PROFILE_PIC_SIZE,
+    borderRadius: PROFILE_PIC_SIZE / 2,
     marginBottom: 10,
   },
   memberName: {
-    fontSize: 17,
+    fontSize: 16,
     color: '#4B2E83',
     fontWeight: '500',
+    textAlign: 'center',
+  },
+  secondRowContainer: {
+    marginTop: 20,
+  },
+  singleItemSecondRow: {
+    justifyContent: 'center',
+  },
+  noVideoContainer: {
+    height: VIDEO_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    marginVertical: 10,
+  },
+  noVideoText: {
+    fontSize: 16,
+    color: '#666',
   },
 }); 

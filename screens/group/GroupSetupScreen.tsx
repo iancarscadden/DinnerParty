@@ -90,11 +90,72 @@ export function GroupSetupScreen({
   const [refreshing, setRefreshing] = useState(false);
   const [isLeader, setIsLeader] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [subscribed, setSubscribed] = useState(false);
   const router = useRouter();
 
   useEffect(() => {
     loadMembers();
-  }, []);
+    
+    // Setup real-time subscriptions
+    const setupSubscription = () => {
+      if (subscribed) return;
+      
+      console.log('Setting up GroupSetupScreen real-time subscriptions for group:', groupId);
+      
+      // Subscribe to group_members changes
+      const memberSubscription = supabase
+        .channel('setup_member_updates')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'group_members',
+          filter: `group_id=eq.${groupId}`
+        }, () => {
+          console.log('Group members changed in setup screen, reloading members');
+          loadMembers(false); // Don't show loading indicator for real-time updates
+        })
+        .subscribe();
+
+      // Subscribe to groups changes
+      const groupSubscription = supabase
+        .channel('setup_group_updates')
+        .on('postgres_changes', {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'groups',
+          filter: `id=eq.${groupId}`
+        }, (payload) => {
+          console.log('Group updated in setup screen:', payload.new);
+          
+          // Check if group state changed to live
+          if (payload.new.is_live) {
+            console.log('Group is now live, triggering profile completion');
+            onProfileComplete();
+          }
+        })
+        .subscribe();
+
+      setSubscribed(true);
+      
+      return () => {
+        memberSubscription.unsubscribe();
+        groupSubscription.unsubscribe();
+        setSubscribed(false);
+      };
+    };
+    
+    setupSubscription();
+    
+    // Cleanup on unmount
+    return () => {
+      if (subscribed) {
+        console.log('Cleaning up GroupSetupScreen subscriptions');
+        supabase.channel('setup_member_updates').unsubscribe();
+        supabase.channel('setup_group_updates').unsubscribe();
+        setSubscribed(false);
+      }
+    };
+  }, [groupId]);
 
   // Add effect to respond to parent refreshing state
   useEffect(() => {
@@ -103,8 +164,12 @@ export function GroupSetupScreen({
     }
   }, [parentRefreshing]);
 
-  const loadMembers = async () => {
+  const loadMembers = async (showLoading = true) => {
     try {
+      if (showLoading) {
+        setLoadingMembers(true);
+      }
+      
       const memberData = await getGroupMembers(groupId);
       setMembers(memberData);
       

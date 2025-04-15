@@ -5,6 +5,12 @@ import { Video, ResizeMode } from 'expo-av';
 import { Group, getGroupMembers, leaveGroup } from '../../services/groups';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../services/auth';
+import Animated, {
+  useSharedValue,
+  useAnimatedScrollHandler,
+  runOnJS
+} from 'react-native-reanimated';
+import { VideoVisibilityTracker } from '../../components/VideoVisibilityTracker';
 
 const { width } = Dimensions.get('window');
 const VIDEO_HEIGHT = width * 0.8;
@@ -38,22 +44,38 @@ export function GroupProfileScreen({
   const [brightness, setBrightness] = useState(1);
   const [refreshing, setRefreshing] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [currentScrollY, setCurrentScrollY] = useState(0);
+  const [scrollViewHeight, setScrollViewHeight] = useState(0);
+  const [activeAudioIndex, setActiveAudioIndex] = useState(0);
+  const [visibilityMap, setVisibilityMap] = useState<Record<number, number>>({});
+  const scrollY = useSharedValue(0);
   const router = useRouter();
-  const { session, initialized } = useAuth();
+  const { session, isLoading: authLoading } = useAuth();
 
-  // Debug logs for initial props and state
-  console.log('GroupProfileScreen - Initial Props:', { group, isLeader });
-  console.log('GroupProfileScreen - Auth State:', { session, initialized });
+  // Scroll handler
+  const scrollHandler = useAnimatedScrollHandler({
+    onScroll: (event) => {
+      scrollY.value = event.contentOffset.y;
+      runOnJS(setCurrentScrollY)(event.contentOffset.y);
+    },
+  });
+
+  // Log initial props and auth state once on component mount
+  useEffect(() => {
+    // Debug logs for initial props and state
+    console.log('GroupProfileScreen - Initial Props:', { group, isLeader });
+    console.log('GroupProfileScreen - Auth State:', { session, authLoading });
+  }, []);
 
   useEffect(() => {
     console.log('GroupProfileScreen - Effect triggered with:', {
-      initialized,
+      authLoading,
       hasSession: !!session?.user,
       hasGroup: !!group?.id
     });
 
-    if (!initialized) {
-      console.log('GroupProfileScreen - Still initializing...');
+    if (authLoading) {
+      console.log('GroupProfileScreen - Still loading auth...');
       return;
     }
 
@@ -73,7 +95,7 @@ export function GroupProfileScreen({
     updateBrightness();
     const subscription = Appearance.addChangeListener(updateBrightness);
     return () => subscription.remove();
-  }, [initialized, session, group?.id]);
+  }, [authLoading, session, group?.id]);
 
   // Add effect to respond to parent refreshing state
   useEffect(() => {
@@ -168,6 +190,42 @@ export function GroupProfileScreen({
     }
   }, [onParentRefresh, group?.id]);
 
+  // Handle visibility changes for videos
+  const handleVisibilityChange = useCallback((index: number, visibilityPercentage: number) => {
+    setVisibilityMap(prev => {
+      // Only update if there's a significant change
+      if (Math.abs((prev[index] || 0) - visibilityPercentage) > 5) {
+        return {
+          ...prev,
+          [index]: visibilityPercentage
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  // Track which video has the highest visibility for audio
+  useEffect(() => {
+    if (Object.keys(visibilityMap).length === 0) return;
+
+    // Find the video with the highest visibility
+    let maxVisibility = 0;
+    let maxVisibilityIndex = 0;
+
+    Object.entries(visibilityMap).forEach(([indexStr, visibility]) => {
+      const index = parseInt(indexStr, 10);
+      if (visibility > maxVisibility) {
+        maxVisibility = visibility;
+        maxVisibilityIndex = index;
+      }
+    });
+
+    // Only switch active audio if visibility is significant
+    if (maxVisibility > 25) {
+      setActiveAudioIndex(maxVisibilityIndex);
+    }
+  }, [visibilityMap]);
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -177,7 +235,7 @@ export function GroupProfileScreen({
   }
 
   return (
-    <ScrollView 
+    <Animated.ScrollView 
       style={styles.container}
       contentContainerStyle={styles.scrollContent}
       refreshControl={
@@ -190,23 +248,39 @@ export function GroupProfileScreen({
           titleColor="#4B2E83"
         />
       }
+      onScroll={scrollHandler}
+      scrollEventThrottle={16}
+      onLayout={(event) => {
+        const { height } = event.nativeEvent.layout;
+        setScrollViewHeight(height);
+      }}
     >
       <Text style={styles.headerText}>Your Group</Text>
 
       <View style={styles.videosContainer}>
-        {group.video_links.map((video, index) => (
-          <View key={index} style={styles.videoContainer}>
-            <Video
-              source={{ uri: video }}
-              style={[styles.video, { opacity: brightness }]}
-              useNativeControls={false}
-              resizeMode={ResizeMode.COVER}
-              isLooping
+        {group.video_links && group.video_links.length > 0 ? (
+          group.video_links.map((video, index) => (
+            <VideoVisibilityTracker
+              key={index}
+              videoUrl={video}
+              index={index}
+              scrollY={currentScrollY}
+              scrollViewHeight={scrollViewHeight}
+              onVisibilityChange={handleVisibilityChange}
+              isAudioEnabled={index === activeAudioIndex}
+              brightness={brightness}
               shouldPlay={true}
-              isMuted={true}
+              isLooping={true}
+              videoHeight={VIDEO_HEIGHT}
+              unmutedInExpanded={true}
+              tabName="social"
             />
+          ))
+        ) : (
+          <View style={styles.noVideoContainer}>
+            <Text style={styles.noVideoText}>No videos available</Text>
           </View>
-        ))}
+        )}
       </View>
 
       <View style={styles.membersContainer}>
@@ -234,7 +308,7 @@ export function GroupProfileScreen({
           {isLoading ? 'Leaving...' : 'Leave Group'}
         </Text>
       </TouchableOpacity>
-    </ScrollView>
+    </Animated.ScrollView>
   );
 }
 
@@ -264,13 +338,21 @@ const styles = StyleSheet.create({
     marginBottom: 30,
   },
   videoContainer: {
-    borderRadius: 10,
+    marginBottom: 15,
+    borderRadius: 12,
     overflow: 'hidden',
-    backgroundColor: '#000',
   },
-  video: {
-    width: '100%',
+  noVideoContainer: {
     height: VIDEO_HEIGHT,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f5f5f5',
+    borderRadius: 12,
+    marginVertical: 10,
+  },
+  noVideoText: {
+    fontSize: 16,
+    color: '#666',
   },
   membersContainer: {
     flexDirection: 'row',

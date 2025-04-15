@@ -22,6 +22,7 @@ export interface UserProfile {
   id: string;
   display_name: string;
   profile_picture_url: string;
+  phone_num?: string;
   created_at: string;
   updated_at: string;
 }
